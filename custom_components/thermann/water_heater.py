@@ -33,12 +33,40 @@ async def async_setup_entry(
     )
 
 
-class ThermowattWaterHeater(CoordinatorEntity[ThermowattCoordinator], WaterHeaterEntity):
+# Home Assistant 2026.11 renamed the water heater temperature properties to
+# native_* and deprecated the old names (removed in 2027.11). Older versions
+# only read the old names, so on those we add them as aliases. Defining the
+# old names on 2026.11+ is what triggers the deprecation warning, so the
+# aliases are only mixed in when the base class has no native_* support.
+NATIVE_TEMPERATURES = hasattr(WaterHeaterEntity, "native_current_temperature")
+
+
+class _LegacyTemperatureNames:
+    """Old property names for Home Assistant < 2026.11."""
+
+    @property
+    def temperature_unit(self) -> str:
+        return self.native_temperature_unit
+
+    @property
+    def current_temperature(self) -> float | None:
+        return self.native_current_temperature
+
+    @property
+    def target_temperature(self) -> float | None:
+        return self.native_target_temperature
+
+
+_COMPAT_BASES: tuple[type, ...] = () if NATIVE_TEMPERATURES else (_LegacyTemperatureNames,)
+
+
+class ThermowattWaterHeater(
+    *_COMPAT_BASES, CoordinatorEntity[ThermowattCoordinator], WaterHeaterEntity
+):
     """Representation of one Thermowatt/Thermann Smart boiler."""
 
     _attr_has_entity_name = True
     _attr_name = None
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_min_temp = MIN_TEMP
     _attr_max_temp = MAX_TEMP
     _attr_operation_list = OPERATION_MODES
@@ -64,7 +92,11 @@ class ThermowattWaterHeater(CoordinatorEntity[ThermowattCoordinator], WaterHeate
         return self.coordinator.data.get(self._serial, {})
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_temperature_unit(self) -> str:
+        return UnitOfTemperature.CELSIUS
+
+    @property
+    def native_current_temperature(self) -> float | None:
         val = self._status.get("T_Avg")
         return float(val) if val is not None else None
 
@@ -81,7 +113,7 @@ class ThermowattWaterHeater(CoordinatorEntity[ThermowattCoordinator], WaterHeate
         super()._handle_coordinator_update()
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         val = self._status.get("T_SetPoint")
         return float(val) if val is not None else None
 
