@@ -91,9 +91,16 @@ class ThermowattSmartConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 # Store the tokens so setup reuses this session instead of
                 # sending a second login straight away.
+                # The password is used for this one login and never stored:
+                # HA keeps config entries as plain JSON on disk and in backups.
                 return self.async_create_entry(
                     title=user_input[CONF_EMAIL],
-                    data={**user_input, CONF_DEVICE_UUID: device_uuid, **tokens},
+                    data={
+                        CONF_EMAIL: user_input[CONF_EMAIL],
+                        CONF_APP_VERSION: user_input[CONF_APP_VERSION],
+                        CONF_DEVICE_UUID: device_uuid,
+                        **tokens,
+                    },
                 )
 
         return self.async_show_form(
@@ -122,13 +129,9 @@ class ThermowattSmartConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except Exception as err:  # noqa: BLE001
                 errors["base"] = _error_key(err)
             else:
+                data = {k: v for k, v in entry.data.items() if k != CONF_PASSWORD}
                 return self.async_update_reload_and_abort(
-                    entry,
-                    data_updates={
-                        CONF_PASSWORD: user_input[CONF_PASSWORD],
-                        CONF_APP_VERSION: app_version,
-                        **tokens,
-                    },
+                    entry, data={**data, CONF_APP_VERSION: app_version, **tokens}
                 )
 
         return self.async_show_form(

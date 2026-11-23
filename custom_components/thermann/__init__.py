@@ -103,7 +103,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Thermowatt Smart from a config entry."""
     client = ThermowattClient(
         email=entry.data[CONF_EMAIL],
-        password=entry.data[CONF_PASSWORD],
+        # Only present on entries created before v0.3.0; removed below once
+        # we hold a working session.
+        password=entry.data.get(CONF_PASSWORD),
         device_uuid=entry.data[CONF_DEVICE_UUID],
         app_version=entry.data[CONF_APP_VERSION],
         access_token=entry.data.get(CONF_ACCESS_TOKEN),
@@ -117,7 +119,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             try:
                 return client.list_devices()
             except ThermowattAuthError:
-                _LOGGER.debug("Stored Thermowatt session is no longer valid; logging in once")
+                _LOGGER.debug("Stored Thermowatt session is no longer valid")
+        # Raises ThermowattAuthError (-> reauth) when no password is stored,
+        # which is the normal case from v0.3.0 on.
         client.login()
         return client.list_devices()
 
@@ -138,6 +142,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(str(err)) from err
     finally:
         async_save_tokens(hass, entry, client)
+
+    if CONF_PASSWORD in entry.data and client.has_tokens:
+        # Older versions stored the password in plain text in
+        # .storage/core.config_entries. Tokens are enough from here on; if the
+        # session ever dies, the reauth flow asks for the password again.
+        hass.config_entries.async_update_entry(
+            entry, data={k: v for k, v in entry.data.items() if k != CONF_PASSWORD}
+        )
 
     if not devices:
         raise ConfigEntryNotReady("Thermowatt account returned zero devices")

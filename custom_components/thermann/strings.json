@@ -11,7 +11,7 @@
       },
       "reauth_confirm": {
         "title": "Re-authenticate Thermowatt / Thermann Smart",
-        "description": "Polling for {email} has stopped because the session could not be refreshed or the account is being rate limited. If you were locked out, wait until you can sign in to the app again before submitting.",
+        "description": "Polling for {email} has stopped because the session could not be refreshed or the account is being rate limited. If you were locked out, wait until you can sign in to the app again before submitting. Your password is used for this login only and is not stored.",
         "data": {
           "password": "Password",
           "app_version": "App version (advanced - only change if login fails)"

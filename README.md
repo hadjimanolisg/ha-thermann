@@ -11,7 +11,7 @@ This started as a rewrite of
 (an add-on), restructured as a proper `custom_components` integration with:
 
 - Config flow (UI setup, no YAML)
-- Credentials stored in HA's encrypted config entry storage, not a plaintext options file
+- Your password is used once to sign in and is **not stored**. Only the session tokens are kept (in `.storage/core.config_entries`, which is plain JSON - treat HA backups as sensitive)
 - No dependency on Mosquitto/MQTT - polling happens inside HA itself via a `DataUpdateCoordinator`
 - TLS certificate verification enabled on all requests (the original add-on had it disabled)
 
@@ -50,6 +50,7 @@ Thermowatt's cloud locks accounts that make too many requests. This integration:
 - Backs off (doubling, up to 15 min, honouring `Retry-After`) after HTTP 429 or other errors, and returns to the normal interval after a success.
 - Never retries a password login on its own. If the session can't be refreshed, polling stops and Home Assistant asks you to re-authenticate.
 - Saves the session tokens, so restarting Home Assistant doesn't send a new login.
+- Does not store your password. If the session can't be refreshed (for example after a long outage), Home Assistant shows a **Re-authenticate** prompt and you enter it again.
 
 If your account was locked, wait until you can sign in to the app again before re-authenticating.
 
@@ -58,3 +59,12 @@ If your account was locked, wait until you can sign in to the app again before r
 - Cloud-dependent: if Thermowatt's backend or your internet is down, this integration can't reach your heater (same as the official app).
 - The API was reverse-engineered from app traffic, not officially documented or supported by Thermowatt/Thermann. Endpoint or auth changes on their end can break this without notice - if that happens, check whether the app version bumped and update the `app_version` option first.
 - Not affiliated with or endorsed by Thermowatt, Thermann, Rheem, or Ariston.
+
+## Development
+
+```bash
+pip install -r requirements_test.txt
+pytest
+```
+
+The tests run the integration inside a real Home Assistant core with the cloud API mocked. GitHub Actions also runs `hassfest` and HACS validation on every push and weekly.

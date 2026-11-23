@@ -61,7 +61,7 @@ class ThermowattClient:
     def __init__(
         self,
         email: str,
-        password: str,
+        password: str | None,
         device_uuid: str,
         app_version: str,
         access_token: str | None = None,
@@ -122,6 +122,8 @@ class ThermowattClient:
 
     def login(self) -> None:
         """Password login. Only call this from setup, config flow or reauth."""
+        if not self._password:
+            raise ThermowattAuthError("No password available; re-authentication required")
         with self._lock:
             payload = {
                 "username": self._email,
