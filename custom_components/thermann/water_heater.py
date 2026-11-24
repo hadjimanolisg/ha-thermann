@@ -11,26 +11,33 @@ from homeassistant.components.water_heater import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import ThermowattCoordinator
 from .api import ThermowattApiError
 from .const import CMD_TO_MODE, DEFAULT_TEMP, DOMAIN, MAX_TEMP, MIN_TEMP, OPERATION_MODES
+from .entity import ThermannEntity, as_float, as_int
 
 _LOGGER = logging.getLogger(__name__)
+
+# Extra /status fields shown as attributes. Their exact meaning isn't
+# documented; names describe what they appear to be from observed values.
+EXTRA_ATTRIBUTES = {
+    "desired_temperature": "T_dsrd",
+    "schedule_temperature": "Tmsch",
+    "boost_temperature": "TBoost",
+    "time_remaining": "TimeRemaining",
+    "frost_protection_temperature": "T_set_off",
+    "demand_response_status": "Drm_status",
+}
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: ThermowattCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        ThermowattWaterHeater(coordinator, serial, name)
-        for serial, name in coordinator.devices.items()
-    )
+    async_add_entities(ThermowattWaterHeater(coordinator, serial) for serial in coordinator.devices)
 
 
 # Home Assistant 2026.11 renamed the water heater temperature properties to
@@ -60,70 +67,64 @@ class _LegacyTemperatureNames:
 _COMPAT_BASES: tuple[type, ...] = () if NATIVE_TEMPERATURES else (_LegacyTemperatureNames,)
 
 
-class ThermowattWaterHeater(
-    *_COMPAT_BASES, CoordinatorEntity[ThermowattCoordinator], WaterHeaterEntity
-):
+class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
     """Representation of one Thermowatt/Thermann Smart boiler."""
 
-    _attr_has_entity_name = True
     _attr_name = None
-    _attr_min_temp = MIN_TEMP
-    _attr_max_temp = MAX_TEMP
     _attr_operation_list = OPERATION_MODES
     _attr_supported_features = (
         WaterHeaterEntityFeature.TARGET_TEMPERATURE
         | WaterHeaterEntityFeature.OPERATION_MODE
     )
 
-    def __init__(self, coordinator: ThermowattCoordinator, serial: str, name: str) -> None:
-        super().__init__(coordinator)
-        self._serial = serial
+    def __init__(self, coordinator: ThermowattCoordinator, serial: str) -> None:
+        super().__init__(coordinator, serial, key=None)
+        # Kept from earlier versions so existing entities keep their history.
         self._attr_unique_id = f"thermowatt_{serial}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, serial)},
-            manufacturer="Thermowatt",
-            name=name,
-            model="Thermann Smart Electric",
-        )
         self._last_setpoint = DEFAULT_TEMP
-
-    @property
-    def _status(self) -> dict:
-        return self.coordinator.data.get(self._serial, {})
 
     @property
     def native_temperature_unit(self) -> str:
         return UnitOfTemperature.CELSIUS
 
     @property
+    def min_temp(self) -> float:
+        """The heater reports its own limits; fall back if it doesn't."""
+        return as_int(self.status.get("T_set_min")) or MIN_TEMP
+
+    @property
+    def max_temp(self) -> float:
+        return as_int(self.status.get("T_set_max")) or MAX_TEMP
+
+    @property
     def native_current_temperature(self) -> float | None:
-        val = self._status.get("T_Avg")
-        return float(val) if val is not None else None
+        return as_float(self.status.get("T_Avg"))
+
+    @property
+    def native_target_temperature(self) -> float | None:
+        return as_float(self.status.get("T_SetPoint"))
+
+    @property
+    def current_operation(self) -> str | None:
+        cmd = as_int(self.status.get("Cmd"))
+        return CMD_TO_MODE.get(cmd) if cmd is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            name: as_float(self.status.get(field))
+            for name, field in EXTRA_ATTRIBUTES.items()
+            if self.status.get(field) is not None
+        }
 
     @callback
     def _handle_coordinator_update(self) -> None:
         # Remember the last real setpoint so switching back to "manual"
         # restores it. Done here rather than in a property getter.
-        val = self._status.get("T_SetPoint")
-        try:
-            if val is not None:
-                self._last_setpoint = int(float(val))
-        except (TypeError, ValueError):
-            pass
+        setpoint = as_int(self.status.get("T_SetPoint"))
+        if setpoint is not None:
+            self._last_setpoint = setpoint
         super()._handle_coordinator_update()
-
-    @property
-    def native_target_temperature(self) -> float | None:
-        val = self._status.get("T_SetPoint")
-        return float(val) if val is not None else None
-
-    @property
-    def current_operation(self) -> str | None:
-        cmd = self._status.get("Cmd")
-        try:
-            return CMD_TO_MODE.get(int(cmd), None)
-        except (TypeError, ValueError):
-            return None
 
     async def _async_send(self, func, *args) -> None:
         try:
@@ -135,6 +136,11 @@ class ThermowattWaterHeater(
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         temp = int(kwargs[ATTR_TEMPERATURE])
+        if not self.min_temp <= temp <= self.max_temp:
+            raise ServiceValidationError(
+                f"{temp} °C is outside this heater's range "
+                f"({self.min_temp:g}-{self.max_temp:g} °C)"
+            )
         await self._async_send(self.coordinator.client.set_temperature, self._serial, temp)
         self._last_setpoint = temp
 

@@ -7,6 +7,28 @@ import pytest
 
 from custom_components.thermann import api
 
+# Shaped like a real /status response (every value is a string).
+STATUS = {
+    "VolatileErrors": "0",
+    "NonVolatileErrors": "0",
+    "T_SetPoint": "60",
+    "Cmd": "9",
+    "WaterHeaterSts": "1",
+    "T_dsrd": "60",
+    "T_Avg": "55",
+    "TimeRemaining": "0",
+    "T_set_min": "20",
+    "T_set_max": "70",
+    "T_set_off": "16",
+    "Tmec_SW_Version": "07.00.03.04",
+    "Wifi_SW_Version": "01.02.03",
+    "TAmb": "33",
+    "Rssi": "-80",
+    "Drm_status": "0",
+    "Tmsch": "45",
+    "TBoost": "70",
+}
+
 BASE_DATA = {"email": "user@example.com", "app_version": "3.14", "device_uuid": "dev-uuid"}
 
 
@@ -50,10 +72,10 @@ class FakeClient:
         self._t = ("new-access", "new-refresh")
 
     def list_devices(self):
-        return self._run("list", [{"seriale": "SN1", "nome": "Boiler"}])
+        return self._run("list", [{"seriale": "SN1", "nome": "Boiler", "type": "TMEC", "idModello": 3}])
 
     def get_status(self, serial):
-        return self._run("status", {"T_Avg": 55, "T_SetPoint": 60, "Cmd": 9, "WaterHeaterSts": 1})
+        return self._run("status", dict(STATUS))
 
     def set_temperature(self, serial, temp):
         self._run("set_temperature", None)

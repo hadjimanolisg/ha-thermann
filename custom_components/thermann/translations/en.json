@@ -47,11 +47,20 @@
       },
       "energy": {
         "name": "Energy"
+      },
+      "ambient_temperature": {
+        "name": "Ambient temperature"
+      },
+      "wifi_signal": {
+        "name": "Wi-Fi signal"
       }
     },
     "binary_sensor": {
       "heating": {
         "name": "Heating"
+      },
+      "fault": {
+        "name": "Fault"
       }
     }
   }

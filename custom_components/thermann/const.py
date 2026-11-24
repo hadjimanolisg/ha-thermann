@@ -37,8 +37,10 @@ MODE_TO_CMD = {v: k for k, v in CMD_TO_MODE.items()}
 
 OPERATION_MODES = ["off", "eco", "manual", "auto", "holiday"]
 
+# Fallback limits only: the heater reports its own in /status as T_set_min /
+# T_set_max (observed 20 / 70 on a Thermann Smart Electric).
 MIN_TEMP = 20
-MAX_TEMP = 75
+MAX_TEMP = 70
 DEFAULT_TEMP = 60
 
 CONF_ELEMENT_KW = "element_kw"

@@ -1,7 +1,5 @@
-"""Sensor platform for Thermann Smart: current temperature + estimated energy use."""
+"""Sensor platform for Thermann Smart: temperatures, estimated energy, Wi-Fi signal."""
 from __future__ import annotations
-
-import logging
 
 from homeassistant.components.sensor import (
     RestoreSensor,
@@ -10,17 +8,19 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy, UnitOfTemperature
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.const import (
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
+    UnitOfEnergy,
+    UnitOfTemperature,
+)
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import ThermowattCoordinator
 from .const import CONF_ELEMENT_KW, DEFAULT_ELEMENT_KW, DOMAIN
-
-_LOGGER = logging.getLogger(__name__)
+from .entity import ThermannEntity, as_float, as_int
 
 
 async def async_setup_entry(
@@ -30,43 +30,68 @@ async def async_setup_entry(
     element_kw = entry.options.get(CONF_ELEMENT_KW, DEFAULT_ELEMENT_KW)
 
     entities: list[SensorEntity] = []
-    for serial, name in coordinator.devices.items():
-        entities.append(ThermannTemperatureSensor(coordinator, serial, name))
-        entities.append(ThermannEnergySensor(coordinator, serial, name, element_kw))
+    for serial in coordinator.devices:
+        entities += [
+            ThermannTemperatureSensor(coordinator, serial),
+            ThermannEnergySensor(coordinator, serial, element_kw),
+            ThermannAmbientTemperatureSensor(coordinator, serial),
+            ThermannWifiSignalSensor(coordinator, serial),
+        ]
     async_add_entities(entities)
 
 
-def _device_info(serial: str, name: str) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={(DOMAIN, serial)},
-        manufacturer="Thermowatt",
-        name=name,
-        model="Thermann Smart Electric",
-    )
-
-
-class ThermannTemperatureSensor(CoordinatorEntity[ThermowattCoordinator], SensorEntity):
+class ThermannTemperatureSensor(ThermannEntity, SensorEntity):
     """Current tank temperature as a standalone sensor."""
 
-    _attr_has_entity_name = True
     _attr_translation_key = "current_temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
 
-    def __init__(self, coordinator: ThermowattCoordinator, serial: str, name: str) -> None:
-        super().__init__(coordinator)
-        self._serial = serial
-        self._attr_unique_id = f"thermann_{serial}_current_temperature"
-        self._attr_device_info = _device_info(serial, name)
+    def __init__(self, coordinator: ThermowattCoordinator, serial: str) -> None:
+        super().__init__(coordinator, serial, "current_temperature")
 
     @property
     def native_value(self) -> float | None:
-        val = self.coordinator.data.get(self._serial, {}).get("T_Avg")
-        return float(val) if val is not None else None
+        return as_float(self.status.get("T_Avg"))
 
 
-class ThermannEnergySensor(CoordinatorEntity[ThermowattCoordinator], RestoreSensor):
+class ThermannAmbientTemperatureSensor(ThermannEntity, SensorEntity):
+    """TAmb from /status: the temperature around the heater / its electronics."""
+
+    _attr_translation_key = "ambient_temperature"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: ThermowattCoordinator, serial: str) -> None:
+        super().__init__(coordinator, serial, "ambient_temperature")
+
+    @property
+    def native_value(self) -> float | None:
+        return as_float(self.status.get("TAmb"))
+
+
+class ThermannWifiSignalSensor(ThermannEntity, SensorEntity):
+    """Wi-Fi signal strength (Rssi). Disabled by default, as is usual for RSSI."""
+
+    _attr_translation_key = "wifi_signal"
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator: ThermowattCoordinator, serial: str) -> None:
+        super().__init__(coordinator, serial, "wifi_signal")
+
+    @property
+    def native_value(self) -> int | None:
+        return as_int(self.status.get("Rssi"))
+
+
+class ThermannEnergySensor(ThermannEntity, RestoreSensor):
     """Estimated cumulative energy use, integrated from heating on/off time * element kW.
 
     This is an estimate, not a measurement from a real power meter: it assumes
@@ -75,20 +100,14 @@ class ThermannEnergySensor(CoordinatorEntity[ThermowattCoordinator], RestoreSens
     heating. Suitable for rough tracking / the Energy dashboard, not billing.
     """
 
-    _attr_has_entity_name = True
     _attr_translation_key = "energy"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
 
-    def __init__(
-        self, coordinator: ThermowattCoordinator, serial: str, name: str, element_kw: float
-    ) -> None:
-        super().__init__(coordinator)
-        self._serial = serial
+    def __init__(self, coordinator: ThermowattCoordinator, serial: str, element_kw: float) -> None:
+        super().__init__(coordinator, serial, "energy")
         self._element_kw = element_kw
-        self._attr_unique_id = f"thermann_{serial}_energy"
-        self._attr_device_info = _device_info(serial, name)
         self._total_kwh = 0.0
         self._last_update = None
 
@@ -96,10 +115,8 @@ class ThermannEnergySensor(CoordinatorEntity[ThermowattCoordinator], RestoreSens
         await super().async_added_to_hass()
         last_data = await self.async_get_last_sensor_data()
         if last_data is not None and last_data.native_value is not None:
-            try:
-                self._total_kwh = float(last_data.native_value)
-            except (TypeError, ValueError):
-                self._total_kwh = 0.0
+            restored = as_float(last_data.native_value)
+            self._total_kwh = restored if restored is not None else 0.0
         self._last_update = dt_util.utcnow()
 
     @property
@@ -110,16 +127,12 @@ class ThermannEnergySensor(CoordinatorEntity[ThermowattCoordinator], RestoreSens
     def extra_state_attributes(self) -> dict:
         return {"element_kw": self._element_kw}
 
+    @callback
     def _handle_coordinator_update(self) -> None:
         now = dt_util.utcnow()
         if self._last_update is not None:
             elapsed_hours = (now - self._last_update).total_seconds() / 3600
-            status = self.coordinator.data.get(self._serial, {})
-            try:
-                water_heater_sts = int(status.get("WaterHeaterSts", 0) or 0)
-            except (TypeError, ValueError):
-                water_heater_sts = 0
-            if water_heater_sts & 1:
+            if (as_int(self.status.get("WaterHeaterSts")) or 0) & 1:
                 self._total_kwh += self._element_kw * elapsed_hours
         self._last_update = now
         super()._handle_coordinator_update()

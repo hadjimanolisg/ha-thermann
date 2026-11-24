@@ -61,6 +61,8 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         )
         self.client = client
         self.devices = {d["seriale"]: d.get("nome", "Boiler") for d in devices if d.get("seriale")}
+        # /user-info "type", e.g. "TMEC"; shown as the model ID on the device page.
+        self.device_types = {d["seriale"]: d.get("type") for d in devices if d.get("seriale")}
         # Options at setup time; lets the update listener tell an options
         # change (needs reload) from a token save (must NOT reload).
         self.options_snapshot = dict(entry.options)
