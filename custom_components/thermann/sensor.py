@@ -97,7 +97,8 @@ class ThermannEnergySensor(ThermannEntity, RestoreSensor):
     This is an estimate, not a measurement from a real power meter: it assumes
     the element draws a constant `element_kw` (set in the integration's
     Configure/Options screen) for the entire time the cloud reports it as
-    heating. Suitable for rough tracking / the Energy dashboard, not billing.
+    heating. Time while polls fail is not counted (it may under-count after an
+    outage, never over-count). Suitable for rough tracking, not billing.
     """
 
     _attr_translation_key = "energy"
@@ -129,10 +130,17 @@ class ThermannEnergySensor(ThermannEntity, RestoreSensor):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        now = dt_util.utcnow()
-        if self._last_update is not None:
-            elapsed_hours = (now - self._last_update).total_seconds() / 3600
-            if (as_int(self.status.get("WaterHeaterSts")) or 0) & 1:
-                self._total_kwh += self._element_kw * elapsed_hours
-        self._last_update = now
+        # Only a successful poll is evidence of the heating state. Failed polls
+        # (outage, rate limit) reuse the old data, so they add nothing, and the
+        # gap to the next good poll is capped at twice the poll interval: after
+        # an hour-long quota backoff one "heating" reading must not count as an
+        # hour of heating.
+        if self.coordinator.last_update_success:
+            now = dt_util.utcnow()
+            if self._last_update is not None:
+                cap = 2 * self.coordinator.base_interval.total_seconds()
+                elapsed = min((now - self._last_update).total_seconds(), cap)
+                if elapsed > 0 and (as_int(self.status.get("WaterHeaterSts")) or 0) & 1:
+                    self._total_kwh += self._element_kw * elapsed / 3600
+            self._last_update = now
         super()._handle_coordinator_update()

@@ -172,3 +172,44 @@ async def test_saved_interval_below_minimum_is_raised(hass, fake_client, caplog)
 async def test_refresh_margin_follows_poll_interval(hass, fake_client):
     entry = await setup(hass, WITH_TOKENS, options={"poll_interval": 600})
     assert fake_client.instances[-1].refresh_margin == 660
+
+
+async def test_successful_setup_saves_heater_list(hass, fake_client):
+    entry = await setup(hass, WITH_TOKENS)
+    assert entry.data["devices"] == [{"seriale": "SN1", "nome": "Boiler", "type": "TMEC"}]
+
+
+SAVED = {**WITH_TOKENS, "devices": [{"seriale": "SN1", "nome": "Boiler", "type": "TMEC"}]}
+
+
+async def test_restart_while_rate_limited_waits_without_reauth(hass, fake_client):
+    def exhausted(c):
+        raise api.ThermowattRateLimitError("quota", daily=True)
+
+    fake_client.behaviour["list"] = exhausted
+    entry = await setup(hass, SAVED)
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert not reauth_started(hass)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    assert coordinator.rate_limited is True
+    assert coordinator.update_interval == timedelta(seconds=3600)
+    assert "status" not in fake_client.calls  # no poll spent on a spent quota
+    assert hass.states.get("water_heater.boiler").state == "unavailable"
+
+    # When the quota is back, the next scheduled poll brings everything back.
+    fake_client.behaviour.pop("list")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get("water_heater.boiler").state == "manual"
+    assert coordinator.rate_limited is False
+
+
+async def test_rate_limit_without_saved_heaters_still_reauths(hass, fake_client):
+    def exhausted(c):
+        raise api.ThermowattRateLimitError("quota", daily=True)
+
+    fake_client.behaviour["list"] = exhausted
+    entry = await setup(hass, WITH_TOKENS)
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert reauth_started(hass)

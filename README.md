@@ -45,7 +45,7 @@ One device per heater on your account, with:
 
 **Sensors**
 - `Temperature` - current water temperature
-- `Energy` - estimated kWh, from heating time x element power (set the element's kW under Configure)
+- `Energy` - estimated kWh, from heating time x element power (set the element's kW under Configure). Only time between successful polls counts, so after an outage it can under-count but never over-count.
 - `Ambient temperature` (diagnostic)
 - `Wi-Fi signal` in dBm (diagnostic, disabled by default; enable it in the entity settings)
 
@@ -66,6 +66,7 @@ Thermowatt's cloud has an undocumented **daily request quota** per account, shar
 - Recognises quota exhaustion however the API reports it: HTTP 429, or the more common HTTP 200 reply `{"success": false, "error": "Daily request limit exceeded"}`. Any other `success: false` reply counts as a failure too, never as a reading or a successful command.
 - After the daily quota runs out, checks **once an hour** until it resets (the reset time is unknown) and logs a warning. Other errors back off by doubling up to 15 min, honouring `Retry-After`. Polling returns to normal after the next good reading.
 - Refuses commands while the account is rate limited (nothing is queued or retried later), so they don't spend more of the quota.
+- If Home Assistant restarts while the account is rate limited, the integration still starts (using the heater list from the last successful start), shows the entities as unavailable and waits for the backoff. It doesn't ask for your password again.
 - Never retries a password login on its own. If the session can't be refreshed, polling stops and Home Assistant asks you to re-authenticate.
 - Saves the session tokens, so restarting Home Assistant doesn't send a new login.
 - Renews the session token shortly **before** it expires (it lasts about 30 minutes), instead of waiting for a request to be rejected. At 300 s polling that's about 340 requests a day instead of about 385. If the token's expiry can't be read, it falls back to renewing after a rejection.

@@ -15,6 +15,7 @@ from .const import (
     CONF_ACCESS_TOKEN,
     CONF_APP_VERSION,
     CONF_DEVICE_UUID,
+    CONF_DEVICES,
     CONF_POLL_INTERVAL,
     CONF_REFRESH_TOKEN,
     DEFAULT_POLL_INTERVAL,
@@ -78,6 +79,18 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         # True from a rate-limit/quota rejection until the next good poll.
         # Commands are refused meanwhile, so they don't spend more quota.
         self.rate_limited = False
+
+    @property
+    def base_interval(self) -> timedelta:
+        """The configured poll interval, without any backoff."""
+        return self._base_interval
+
+    @callback
+    def async_start_rate_limited(self, err: ThermowattRateLimitError) -> None:
+        """Start after a rate limit at setup: no data yet, first poll after the backoff."""
+        self.rate_limited = True
+        self._back_off(err.retry_after, quota=err.daily)
+        self.async_set_update_error(UpdateFailed(f"{err}; first poll in {self.update_interval}"))
 
     def _poll_all(self) -> dict[str, dict]:
         # One /status call per device. /user-info is account-level and only
@@ -155,19 +168,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         client.login()
         return client.list_devices()
 
+    rate_limited: ThermowattRateLimitError | None = None
     try:
         devices = await hass.async_add_executor_job(_connect)
     except ThermowattAuthError as err:
         raise ConfigEntryAuthFailed(str(err)) from err
     except ThermowattRateLimitError as err:
-        # Don't let HA's setup retry keep hammering a rate-limited account.
-        # Reauth puts the next attempt in the user's hands.
+        stored = entry.data.get(CONF_DEVICES)
+        if not (stored and client.has_tokens):
+            # Nothing to start with. Don't let HA's setup retry keep hammering
+            # a rate-limited account; reauth puts the next try in the user's hands.
+            _LOGGER.warning(
+                "Thermowatt is rate limiting this account (%s). Polling is paused; "
+                "wait for the lockout to clear, then re-authenticate from Devices & Services.",
+                err,
+            )
+            raise ConfigEntryAuthFailed(str(err)) from err
+        # The session is fine, only the quota is spent: start with the heaters
+        # from the last successful setup and let the coordinator's backoff wait.
         _LOGGER.warning(
-            "Thermowatt is rate limiting this account (%s). Polling is paused; "
-            "wait for the lockout to clear, then re-authenticate from Devices & Services.",
-            err,
+            "Thermowatt is rate limiting this account (%s); starting with the saved "
+            "heater list and waiting before the first poll", err,
         )
-        raise ConfigEntryAuthFailed(str(err)) from err
+        devices = stored
+        rate_limited = err
     except ThermowattApiError as err:
         raise ConfigEntryNotReady(str(err)) from err
     finally:
@@ -184,8 +208,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not devices:
         raise ConfigEntryNotReady("Thermowatt account returned zero devices")
 
+    if rate_limited is None:
+        heaters = [
+            {"seriale": d["seriale"], "nome": d.get("nome", "Boiler"), "type": d.get("type")}
+            for d in devices
+            if d.get("seriale")
+        ]
+        if entry.data.get(CONF_DEVICES) != heaters:
+            hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_DEVICES: heaters})
+
     coordinator = ThermowattCoordinator(hass, entry, client, devices)
-    await coordinator.async_config_entry_first_refresh()
+    if rate_limited is None:
+        await coordinator.async_config_entry_first_refresh()
+    else:
+        coordinator.async_start_rate_limited(rate_limited)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 

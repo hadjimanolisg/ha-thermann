@@ -71,3 +71,36 @@ async def test_high_ambient_pause_is_not_a_fault(hass, loaded, fake_client):
     await refresh_with(hass, loaded, fake_client, NonVolatileErrors="6")
     assert hass.states.get("binary_sensor.boiler_high_ambient_pause").state == "on"
     assert hass.states.get("binary_sensor.boiler_fault").state == "on"
+
+
+async def test_energy_counts_only_successful_polls_and_caps_gaps(hass, loaded, fake_client, freezer):
+    from datetime import timedelta
+
+    from custom_components.thermann import api
+
+    coordinator = hass.data[DOMAIN][loaded.entry_id]
+    energy = "sensor.boiler_energy"
+    assert float(hass.states.get(energy).state) == 0
+
+    # 5 min heating at the default 3.6 kW = 0.3 kWh.
+    freezer.tick(timedelta(seconds=300))
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert float(hass.states.get(energy).state) == pytest.approx(0.3)
+
+    # An hour of failed polls (old data says "heating") adds nothing.
+    def down(c):
+        raise api.ThermowattApiError("down")
+
+    fake_client.behaviour["status"] = down
+    freezer.tick(timedelta(seconds=3600))
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(energy).state == "unavailable"
+
+    # Next good poll: the 65 min gap counts as at most 2 x 300 s = 0.6 kWh.
+    fake_client.behaviour.pop("status")
+    freezer.tick(timedelta(seconds=300))
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert float(hass.states.get(energy).state) == pytest.approx(0.9)

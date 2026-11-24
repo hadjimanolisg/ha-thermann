@@ -30,6 +30,9 @@ QUOTA_BACKOFF_INTERVAL = 3600
 CONF_ACCESS_TOKEN = "access_token"
 CONF_REFRESH_TOKEN = "refresh_token"
 CONF_DEVICE_UUID = "device_uuid"
+# Heater list (serial, name, type) from the last successful /user-info, so a
+# restart while rate limited can still set up and wait instead of reauth.
+CONF_DEVICES = "devices"
 
 # Cmd is a bit field: bit 0 = on, the other bits = mode family. The same
 # family with bit 0 cleared means the heater is off (e.g. 8 = turned off from
