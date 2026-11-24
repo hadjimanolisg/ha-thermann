@@ -146,3 +146,72 @@ def test_quota_during_refresh_and_login():
     with pytest.raises(api.ThermowattRateLimitError) as err:
         c.login()
     assert err.value.daily is True
+
+
+def jwt(exp):
+    import base64, json
+
+    def part(obj):
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
+
+    return f"{part({'alg': 'HS256'})}.{part({'exp': exp})}.sig"
+
+
+def jwt_client(responses, expires_in, margin=360):
+    import time
+
+    c = client(responses, tokens=(jwt(time.time() + expires_in), "r"))
+    c.refresh_margin = margin
+    return c
+
+
+STATUS_OK = {"result": {"T_Avg": "40"}}
+
+
+def test_expiring_token_refreshed_before_the_poll():
+    c = jwt_client([resp(200, TOKENS), resp(200, STATUS_OK)], expires_in=200)
+    c.get_status("S")
+    assert endpoints(c) == ["refresh", "status"]  # 2 requests instead of 3
+    assert c.tokens[0] == "a2"
+
+
+def test_fresh_token_not_refreshed():
+    c = jwt_client([resp(200, STATUS_OK)], expires_in=1500)
+    c.get_status("S")
+    assert endpoints(c) == ["status"]
+
+
+def test_already_expired_token_refreshed_first():
+    c = jwt_client([resp(200, TOKENS), resp(200, STATUS_OK)], expires_in=-30)
+    c.get_status("S")
+    assert endpoints(c) == ["refresh", "status"]
+
+
+def test_non_jwt_token_falls_back_to_401_path():
+    c = client([resp(401), resp(200, TOKENS), resp(200, STATUS_OK)])  # token "a"
+    c.get_status("S")
+    assert endpoints(c) == ["status", "refresh", "status"]
+
+
+def test_early_refresh_at_most_once_per_ten_minutes():
+    c = jwt_client([resp(401), resp(200, STATUS_OK), resp(200, STATUS_OK)], expires_in=100)
+    c.get_status("S")  # early refresh attempt fails (401), poll goes ahead with old token
+    c.get_status("S")  # still near expiry, but no second early attempt
+    assert endpoints(c) == ["refresh", "status", "status"]
+
+
+def test_quota_during_early_refresh_sends_no_poll():
+    c = jwt_client([resp(200, QUOTA)], expires_in=100)
+    with pytest.raises(api.ThermowattRateLimitError):
+        c.get_status("S")
+    assert endpoints(c) == ["refresh"]
+
+
+def test_odd_exp_values_are_ignored():
+    import base64, json
+
+    for exp in ("soon", True, float("inf"), None):
+        payload = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).rstrip(b"=").decode()
+        assert api._jwt_expiry(f"h.{payload}.s") is None
+    assert api._jwt_expiry("not-a-jwt") is None
+    assert api._jwt_expiry("a.%%%.c") is None

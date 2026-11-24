@@ -167,3 +167,8 @@ async def test_saved_interval_below_minimum_is_raised(hass, fake_client, caplog)
     entry = await setup(hass, WITH_TOKENS, options={"poll_interval": 60})
     assert hass.data[DOMAIN][entry.entry_id].update_interval == timedelta(seconds=240)
     assert "below the 240 s minimum" in caplog.text
+
+
+async def test_refresh_margin_follows_poll_interval(hass, fake_client):
+    entry = await setup(hass, WITH_TOKENS, options={"poll_interval": 600})
+    assert fake_client.instances[-1].refresh_margin == 660

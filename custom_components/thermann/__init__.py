@@ -67,6 +67,8 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             update_interval=self._base_interval,
         )
         self.client = client
+        # Refresh the token early enough that one poll lands before expiry.
+        client.refresh_margin = self._base_interval.total_seconds() + 60
         self.devices = {d["seriale"]: d.get("nome", "Boiler") for d in devices if d.get("seriale")}
         # /user-info "type", e.g. "TMEC"; shown as the model ID on the device page.
         self.device_types = {d["seriale"]: d.get("type") for d in devices if d.get("seriale")}

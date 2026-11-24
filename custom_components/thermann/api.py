@@ -14,12 +14,20 @@ Rate-limit safety rules this client follows:
   off. The API reports it either as HTTP 429 or, more often, as HTTP 200 with
   {"success": false, "error": "Daily request limit exceeded"}, so every 200
   body is checked too. Any other `success: false` body is a failure.
+- The access token lasts about 30 minutes. When it is a JWT with an `exp`
+  claim, it is refreshed shortly before it expires instead of after a 401:
+  two requests (refresh + poll) instead of three (failed poll + refresh +
+  retried poll). The 401 path stays as the fallback.
 """
 from __future__ import annotations
 
+import base64
 import datetime
+import json
 import logging
+import math
 import threading
+import time
 from typing import Any
 
 import requests
@@ -29,6 +37,25 @@ from .const import API_KEY, BASE_URL
 _LOGGER = logging.getLogger(__name__)
 
 _TIMEOUT = 15
+
+# Never refresh early more than once per this many seconds, whatever the token
+# says (guards against a wrong clock or an odd `exp`).
+_MIN_EARLY_REFRESH_SPACING = 600
+
+
+def _jwt_expiry(token: str | None) -> float | None:
+    """The `exp` (Unix time) of a JWT, read without verifying it; else None."""
+    if not token or token.count(".") != 2:
+        return None
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        exp = json.loads(base64.urlsafe_b64decode(payload)).get("exp")
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if isinstance(exp, bool) or not isinstance(exp, (int, float)) or not math.isfinite(exp):
+        return None
+    return float(exp)
 
 
 class ThermowattApiError(Exception):
@@ -105,6 +132,11 @@ class ThermowattClient:
         # Serialises requests so a poll and a user command can't both hit a
         # 401 and race to refresh the same refresh token.
         self._lock = threading.Lock()
+        # Refresh this many seconds before the token expires. The coordinator
+        # sets it to a bit more than the poll interval, so at least one poll
+        # lands inside the window.
+        self.refresh_margin: float = 120
+        self._last_early_refresh: float = 0.0
 
     # ------------------------------------------------------------------ tokens
 
@@ -199,6 +231,27 @@ class ThermowattClient:
 
     # ------------------------------------------------------------------ requests
 
+    def _refresh_early_locked(self) -> None:
+        """Refresh before expiry if the token says it's due. Caller holds the lock.
+
+        A failed refresh is not fatal: the request goes ahead with the current
+        token and the 401 path handles it. A rate limit propagates, so nothing
+        more is sent while the quota is exhausted.
+        """
+        expiry = _jwt_expiry(self._access_token)
+        if expiry is None:
+            return
+        now = time.time()
+        if expiry - now > self.refresh_margin:
+            return
+        if now - self._last_early_refresh < _MIN_EARLY_REFRESH_SPACING:
+            return
+        self._last_early_refresh = now
+        if self._refresh_locked():
+            _LOGGER.debug("Refreshed the access token %.0f s before it expired", expiry - now)
+        else:
+            _LOGGER.debug("Early token refresh failed; continuing with the current token")
+
     def _request(self, method: str, endpoint: str, serial: str | None = None, **kwargs) -> requests.Response:
         """Send an authenticated request; raise on any non-200 response."""
         url = f"{BASE_URL}{endpoint}"
@@ -207,6 +260,8 @@ class ThermowattClient:
         with self._lock:
             if not self.has_tokens:
                 raise ThermowattAuthError("Not logged in")
+
+            self._refresh_early_locked()
 
             resp = self._send(method, url, {**self._base_headers(serial=serial), **extra_headers}, **kwargs)
 

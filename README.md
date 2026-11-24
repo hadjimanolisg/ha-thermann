@@ -68,6 +68,7 @@ Thermowatt's cloud has an undocumented **daily request quota** per account, shar
 - Refuses commands while the account is rate limited (nothing is queued or retried later), so they don't spend more of the quota.
 - Never retries a password login on its own. If the session can't be refreshed, polling stops and Home Assistant asks you to re-authenticate.
 - Saves the session tokens, so restarting Home Assistant doesn't send a new login.
+- Renews the session token shortly **before** it expires (it lasts about 30 minutes), instead of waiting for a request to be rejected. At 300 s polling that's about 340 requests a day instead of about 385. If the token's expiry can't be read, it falls back to renewing after a rejection.
 - Does not store your password. If the session can't be refreshed (for example after a long outage), Home Assistant shows a **Re-authenticate** prompt and you enter it again.
 
 If your account was locked, wait until you can sign in to the app again before re-authenticating. If you see the app's daily-limit warning, raise the poll interval and keep the app closed when you're not using it: it refreshes about every 20 s while open.
