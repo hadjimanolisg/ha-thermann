@@ -1,27 +1,17 @@
-# --- Python Specific ---
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
 .pytest_cache/
 .venv/
 venv/
-ENV/
 
-# --- VSCode specifc ---
-.vscode
-.history
-.DS_Store
-
-# --- Home Assistant / Add-on Specific ---
-# Ignore any local testing secrets or keys
-secrets.yaml
-*.log
-local_test_data.json
-
-# --- OS Specific ---
+# Editors / OS
+.vscode/
 .DS_Store
 Thumbs.db
 
-# --- Sensitive Environment Files ---
+# Local secrets and API probe output - never commit
 .env
-.flaskenv
+secrets.yaml
+thermowatt_probe.json
+*.log
