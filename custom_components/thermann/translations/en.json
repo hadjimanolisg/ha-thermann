@@ -57,6 +57,9 @@
       },
       "wifi_signal": {
         "name": "Wi-Fi signal"
+      },
+      "time_remaining": {
+        "name": "Time remaining"
       }
     },
     "binary_sensor": {
@@ -68,6 +71,9 @@
       },
       "high_ambient_pause": {
         "name": "High ambient pause"
+      },
+      "anti_legionella": {
+        "name": "Anti-legionella cycle"
       }
     }
   }

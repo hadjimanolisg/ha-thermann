@@ -104,3 +104,19 @@ async def test_energy_counts_only_successful_polls_and_caps_gaps(hass, loaded, f
     await coordinator.async_refresh()
     await hass.async_block_till_done()
     assert float(hass.states.get(energy).state) == pytest.approx(0.9)
+
+
+async def test_time_remaining(hass, loaded, fake_client):
+    entity = er.async_get(hass).async_get("sensor.boiler_time_remaining")
+    assert entity is not None and entity.entity_category == "diagnostic"
+    await refresh_with(hass, loaded, fake_client, TimeRemaining="20")
+    state = hass.states.get("sensor.boiler_time_remaining")
+    assert state.state == "20"
+    assert state.attributes["unit_of_measurement"] == "min"
+
+
+async def test_anti_legionella_bit(hass, loaded, fake_client):
+    assert hass.states.get("binary_sensor.boiler_anti_legionella_cycle").state == "off"
+    await refresh_with(hass, loaded, fake_client, WaterHeaterSts="9")  # 8 + heating
+    assert hass.states.get("binary_sensor.boiler_anti_legionella_cycle").state == "on"
+    assert hass.states.get("binary_sensor.boiler_heating").state == "on"

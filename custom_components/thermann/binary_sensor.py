@@ -20,6 +20,9 @@ from .entity import ThermannEntity, as_int
 # ambient temperature" notice (observed by another project on firmware
 # 07.00.09.06). The heater resumes by itself, so it isn't treated as a fault.
 HIGH_AMBIENT_PAUSE_BIT = 0x02
+# WaterHeaterSts bit 0x08 was inferred by another project (firmware
+# 07.00.09.06) to be set during an anti-legionella (sanitation) cycle.
+ANTI_LEGIONELLA_BIT = 0x08
 
 
 async def async_setup_entry(
@@ -32,6 +35,7 @@ async def async_setup_entry(
             ThermannHeatingBinarySensor(coordinator, serial),
             ThermannFaultBinarySensor(coordinator, serial),
             ThermannHighAmbientPauseBinarySensor(coordinator, serial),
+            ThermannAntiLegionellaBinarySensor(coordinator, serial),
         ]
     async_add_entities(entities)
 
@@ -102,3 +106,22 @@ class ThermannHighAmbientPauseBinarySensor(ThermannEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         non_volatile = as_int(self.status.get("NonVolatileErrors"))
         return bool(non_volatile & HIGH_AMBIENT_PAUSE_BIT) if non_volatile is not None else None
+
+
+class ThermannAntiLegionellaBinarySensor(ThermannEntity, BinarySensorEntity):
+    """On during an anti-legionella cycle (WaterHeaterSts bit 0x08, inferred).
+
+    The heater runs these by itself, heating to a high temperature for a
+    while; mode and the heating sensor are independent of it.
+    """
+
+    _attr_translation_key = "anti_legionella"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: ThermowattCoordinator, serial: str) -> None:
+        super().__init__(coordinator, serial, "anti_legionella")
+
+    @property
+    def is_on(self) -> bool | None:
+        sts = as_int(self.status.get("WaterHeaterSts"))
+        return bool(sts & ANTI_LEGIONELLA_BIT) if sts is not None else None

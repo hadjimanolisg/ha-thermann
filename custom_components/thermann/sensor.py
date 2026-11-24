@@ -13,6 +13,7 @@ from homeassistant.const import (
     EntityCategory,
     UnitOfEnergy,
     UnitOfTemperature,
+    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -36,6 +37,7 @@ async def async_setup_entry(
             ThermannEnergySensor(coordinator, serial, element_kw),
             ThermannAmbientTemperatureSensor(coordinator, serial),
             ThermannWifiSignalSensor(coordinator, serial),
+            ThermannTimeRemainingSensor(coordinator, serial),
         ]
     async_add_entities(entities)
 
@@ -89,6 +91,28 @@ class ThermannWifiSignalSensor(ThermannEntity, SensorEntity):
     @property
     def native_value(self) -> int | None:
         return as_int(self.status.get("Rssi"))
+
+
+class ThermannTimeRemainingSensor(ThermannEntity, SensorEntity):
+    """TimeRemaining from /status, in minutes.
+
+    Read 20 while heating 40 -> 46 C in manual and 0 when idle, so it looks
+    like the heater's estimate of time left to reach the target. Not yet
+    confirmed to count down; the name stays neutral until it is.
+    """
+
+    _attr_translation_key = "time_remaining"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: ThermowattCoordinator, serial: str) -> None:
+        super().__init__(coordinator, serial, "time_remaining")
+
+    @property
+    def native_value(self) -> int | None:
+        return as_int(self.status.get("TimeRemaining"))
 
 
 class ThermannEnergySensor(ThermannEntity, RestoreSensor):

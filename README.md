@@ -48,13 +48,15 @@ One device per heater on your account, with:
 - `Energy` - estimated kWh, from heating time x element power (set the element's kW under Configure). Only time between successful polls counts, so after an outage it can under-count but never over-count.
 - `Ambient temperature` (diagnostic)
 - `Wi-Fi signal` in dBm (diagnostic, disabled by default; enable it in the entity settings)
+- `Time remaining` in minutes (diagnostic) - appears to be the heater's estimate of time left to reach the target while heating; 0 when idle
 
 **Binary sensors**
 - `Heating` - the element is on right now; raw device flags in the `status_flags` attribute
 - `Fault` (diagnostic) - on when the heater reports an error code; codes in the attributes
+- `Anti-legionella cycle` (diagnostic) - on while the heater runs its sanitation cycle (inferred from another project's observations)
 - `High ambient pause` (diagnostic) - heating is paused because it's too hot around the heater; it resumes by itself, so this isn't counted as a fault
 
-The device page also shows the heater and Wi-Fi module firmware versions.
+The device page also shows the heater and Wi-Fi module firmware versions, and offers **Download diagnostics** for bug reports (email, tokens, serial numbers and names are removed).
 
 Everything comes from one `/status` request per heater per poll; extra entities don't add requests.
 
