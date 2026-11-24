@@ -86,7 +86,7 @@ This project builds on:
 - [waterheater-dev/ha-thermowatt-heater](https://github.com/waterheater-dev/ha-thermowatt-heater) - the original Home Assistant add-on that reverse-engineered the Thermowatt cloud API.
 - [MitchellSaunders/ha-thermann](https://github.com/MitchellSaunders/ha-thermann) - the port of that add-on to a native integration, which this repository was forked from.
 
-Since then it has been largely reworked: rate-limit-safe polling and login handling, no stored password, re-authentication, device-reported limits, fault and diagnostic sensors, Home Assistant 2026.11 support, and tests. Report problems in [this repository's issues](https://github.com/hadjimanolisg/ha-thermann/issues), not upstream.
+Since then it has been largely reworked: rate-limit-safe polling and login handling, no stored password, re-authentication, device-reported limits, fault and diagnostic sensors, Home Assistant 2026.11 support, and tests. Report problems in [this repository's issues](https://github.com/m4dm4xcy/ha-thermann/issues), not upstream.
 
 ## Development
 
