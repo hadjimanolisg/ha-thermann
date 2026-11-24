@@ -16,8 +16,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ThermowattCoordinator
 from .api import ThermowattApiError
-from .const import DEFAULT_TEMP, DOMAIN, MAX_TEMP, MIN_TEMP, OPERATION_MODES
+from .const import CMD_FAMILIES, CMD_ON_BIT, DEFAULT_TEMP, DOMAIN, MAX_TEMP, MIN_TEMP, OPERATION_MODES
 from .entity import ThermannEntity, as_float, as_int, decode_mode
+
+# Mode -> Cmd value with the on bit set (the inverse of decode_mode).
+MODE_CMD = {mode: family | CMD_ON_BIT for family, mode in CMD_FAMILIES.items()}
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -156,8 +159,22 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
             await self.hass.async_add_executor_job(func, *args)
         except ThermowattApiError as err:
             raise HomeAssistantError(f"Thermowatt command failed: {err}") from err
-        # Debounced by the coordinator, so rapid changes don't each poll.
-        await self.coordinator.async_request_refresh()
+        # No status poll here: right after a command the cloud still reports
+        # the old state, so a poll would cost a request and show stale values.
+
+    @callback
+    def _async_show_commanded(self, changes: dict[str, str]) -> None:
+        """Show an accepted command now instead of after the next poll.
+
+        Patches this heater's last /status in place (values as strings, like
+        the API). The next poll replaces it with what the heater reports, so
+        a command the heater didn't apply is corrected then.
+        """
+        status = self.status
+        if not status:
+            return
+        status.update(changes)
+        self.async_write_ha_state()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         temp = int(kwargs[ATTR_TEMPERATURE])
@@ -174,8 +191,26 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
             )
         await self._async_send(self.coordinator.client.set_temperature, self._serial, temp)
         self._last_setpoint = temp
+        self._async_show_commanded(
+            {"Cmd": str(MODE_CMD["manual"]), "T_SetPoint": str(temp), "T_dsrd": str(temp)}
+        )
 
     async def async_set_operation_mode(self, operation_mode: str) -> None:
+        setpoint = self._last_setpoint
         await self._async_send(
-            self.coordinator.client.set_mode, self._serial, operation_mode, self._last_setpoint
+            self.coordinator.client.set_mode, self._serial, operation_mode, setpoint
         )
+        if operation_mode == "manual":
+            self._async_show_commanded(
+                {"Cmd": str(MODE_CMD["manual"]), "T_SetPoint": str(setpoint), "T_dsrd": str(setpoint)}
+            )
+        elif operation_mode in MODE_CMD:
+            # The target in eco/auto/holiday comes from the heater; leave it
+            # until the next poll.
+            self._async_show_commanded({"Cmd": str(MODE_CMD[operation_mode])})
+        elif operation_mode == "off":
+            # Off = the current family with the on bit cleared. If the current
+            # Cmd is unknown, don't guess; the next poll shows it.
+            cmd = as_int(self.status.get("Cmd"))
+            if cmd is not None and (cmd & ~CMD_ON_BIT) in CMD_FAMILIES:
+                self._async_show_commanded({"Cmd": str(cmd & ~CMD_ON_BIT)})

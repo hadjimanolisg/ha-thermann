@@ -180,3 +180,81 @@ async def test_commands_refused_while_rate_limited(hass, loaded, fake_client):
             WH_DOMAIN, "set_operation_mode", {"entity_id": ENTITY, "operation_mode": "eco"}, blocking=True
         )
     assert "set_mode" not in fake_client.calls
+
+
+async def test_set_temperature_shows_at_once_without_a_poll(hass, loaded, fake_client):
+    polls = fake_client.calls.count("status")
+    await hass.services.async_call(
+        WH_DOMAIN, "set_temperature", {"entity_id": ENTITY, "temperature": 65}, blocking=True
+    )
+    await hass.async_block_till_done()
+    attrs = hass.states.get(ENTITY).attributes
+    assert attrs["temperature"] == 65
+    assert attrs["manual_setpoint"] == 65
+    # The cloud reports the old state right after a command; don't poll for it.
+    assert fake_client.calls.count("status") == polls
+
+
+@pytest.mark.parametrize(
+    ("mode", "temperature"),
+    [("eco", 60), ("auto", 60), ("holiday", 60), ("off", 60)],
+)
+async def test_mode_change_shows_at_once(hass, loaded, fake_client, mode, temperature):
+    polls = fake_client.calls.count("status")
+    await hass.services.async_call(
+        WH_DOMAIN, "set_operation_mode", {"entity_id": ENTITY, "operation_mode": mode}, blocking=True
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get(ENTITY)
+    assert state.state == mode
+    # Target in other modes comes from the heater; unchanged until the next poll.
+    assert state.attributes["temperature"] == temperature
+    assert fake_client.calls.count("status") == polls
+
+
+async def test_switch_to_manual_shows_restored_setpoint(hass, loaded, fake_client):
+    fake_client.behaviour["status"] = lambda c: {**STATUS, "Cmd": "17", "T_SetPoint": "47", "T_dsrd": "20"}
+    await hass.data[DOMAIN][loaded.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    await hass.services.async_call(
+        WH_DOMAIN, "set_operation_mode", {"entity_id": ENTITY, "operation_mode": "manual"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get(ENTITY)
+    assert state.state == "manual"
+    assert state.attributes["temperature"] == 47
+
+
+async def test_off_from_unknown_mode_is_not_guessed(hass, loaded, fake_client):
+    fake_client.behaviour["status"] = lambda c: {**STATUS, "Cmd": "0"}
+    await hass.data[DOMAIN][loaded.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    await hass.services.async_call(
+        WH_DOMAIN, "set_operation_mode", {"entity_id": ENTITY, "operation_mode": "off"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).state == "unknown"
+
+
+async def test_next_poll_replaces_the_commanded_state(hass, loaded, fake_client):
+    await hass.services.async_call(
+        WH_DOMAIN, "set_operation_mode", {"entity_id": ENTITY, "operation_mode": "eco"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).state == "eco"
+    # The heater didn't apply it: the next poll still says manual.
+    await hass.data[DOMAIN][loaded.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).state == "manual"
+
+
+async def test_failed_command_leaves_state_alone(hass, loaded, fake_client):
+    def fail(c):
+        raise api.ThermowattApiError("500")
+
+    fake_client.behaviour["set_mode"] = fail
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            WH_DOMAIN, "set_operation_mode", {"entity_id": ENTITY, "operation_mode": "eco"}, blocking=True
+        )
+    assert hass.states.get(ENTITY).state == "manual"

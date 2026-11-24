@@ -41,6 +41,7 @@ One device per heater on your account, with:
 - Operation modes: `off`, `eco`, `manual`, `auto`, `holiday`. "Off" is recognised whichever mode the heater was turned off from.
 - Target temperature shows what the heater is aiming for **right now**: your setpoint in manual; in auto, the schedule temperature during scheduled hours and the "T comfort auto" temperature outside them
 - The temperature control is only offered in **manual** mode. The Thermowatt API sets the temperature through manual mode, so changing it in any other mode would also switch the heater to manual and off its schedule. To change it, switch to manual first.
+- Mode and temperature changes show in Home Assistant as soon as the heater's cloud accepts them; the next poll then shows what the heater actually reports. In eco, auto and holiday the target temperature updates at that poll, because it comes from the heater.
 - Attributes: `desired_temperature` (current target), `manual_setpoint`, `schedule_comfort_temperature` (auto, during scheduled hours), `boost_temperature`, `time_remaining`, `frost_protection_temperature`, `demand_response_status`
 
 **Sensors**
@@ -68,6 +69,7 @@ Thermowatt's cloud has an undocumented **daily request quota** per account, shar
 - Polls `/status` once per heater every **300 s (5 min)** by default: about 290 requests a day plus token refreshes, leaving room for the app. Configurable under Configure, **240-3600 s**; a value saved by an older version below 240 s is raised to 240 s, and the Configure form starts at 240 s. Recommended: 300 s or more. If the form shows old text such as "30-3600", refresh the browser page.
 - Recognises quota exhaustion however the API reports it: HTTP 429, or the more common HTTP 200 reply `{"success": false, "error": "Daily request limit exceeded"}`. Any other `success: false` reply counts as a failure too, never as a reading or a successful command.
 - After the daily quota runs out, checks **once an hour** until it resets (the reset time is unknown), logs a warning and shows a notice under **Settings → Repairs**, which clears itself when readings resume. Other errors back off by doubling up to 15 min, honouring `Retry-After`. Polling returns to normal after the next good reading.
+- Doesn't poll after a command: the cloud still reports the old state for a while, so a poll would cost a request and show stale values. The change is shown straight away instead.
 - Refuses commands while the account is rate limited (nothing is queued or retried later), so they don't spend more of the quota.
 - If Home Assistant restarts while the account is rate limited, the integration still starts (using the heater list from the last successful start), shows the entities as unavailable and waits for the backoff. It doesn't ask for your password again.
 - Never retries a password login on its own. If the session can't be refreshed, polling stops and Home Assistant asks you to re-authenticate.
