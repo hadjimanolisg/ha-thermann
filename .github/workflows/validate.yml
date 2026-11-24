@@ -34,7 +34,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Oldest supported HA line, pinned in requirements_test.txt
+          # Oldest HA the integration declares support for (hacs.json)
+          - name: oldest
+            python: "3.12"
+            install: -r requirements_test_oldest.txt
+          # A recent HA line, pinned in requirements_test.txt
           - name: pinned
             python: "3.13"
             install: -r requirements_test.txt

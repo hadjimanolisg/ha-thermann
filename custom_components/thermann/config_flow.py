@@ -156,7 +156,10 @@ class ThermannOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        options = self.config_entry.options
+        # `self.config_entry` only exists on options flows from HA 2024.12;
+        # the handler is the entry ID in every supported version.
+        entry = self.hass.config_entries.async_get_entry(self.handler)
+        options = entry.options if entry else {}
         schema = vol.Schema(
             {
                 vol.Required(
