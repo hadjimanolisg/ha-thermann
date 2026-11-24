@@ -23,9 +23,9 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # brands: needs a PR to home-assistant/brands. description and topics
-          # are repo settings; license is the original authors' call.
-          ignore: brands description topics license
+          # brands: needs a PR to home-assistant/brands; license is the
+          # original authors' call (none upstream).
+          ignore: brands license
 
   tests:
     name: tests (${{ matrix.name }})
