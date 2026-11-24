@@ -215,3 +215,35 @@ def test_odd_exp_values_are_ignored():
         assert api._jwt_expiry(f"h.{payload}.s") is None
     assert api._jwt_expiry("not-a-jwt") is None
     assert api._jwt_expiry("a.%%%.c") is None
+
+
+def test_request_counts_by_kind():
+    c = client([resp(401), resp(200, TOKENS), resp(200, STATUS_OK), resp(200)])
+    c.get_status("S")  # failed poll + renewal + poll
+    c.set_mode("S", "eco")
+    counts = c.request_counts()
+    assert counts["status"] == 2
+    assert counts["token_renewal"] == 1
+    assert counts["command"] == 1
+    assert counts["total"] == 4
+
+
+def test_request_counts_forget_after_a_day(monkeypatch):
+    now = [1_000_000.0]
+    monkeypatch.setattr(api.time, "time", lambda: now[0])
+    c = client([resp(200, STATUS_OK), resp(200, STATUS_OK)])
+    c.get_status("S")
+    now[0] += 86400 - 1
+    c.get_status("S")
+    assert c.request_counts()["status"] == 2
+    now[0] += 2  # first request is now older than 24 h
+    assert c.request_counts()["status"] == 1
+
+
+def test_failed_transport_still_counted():
+    import requests as rq
+
+    c = client([rq.ConnectionError("x")])
+    with pytest.raises(api.ThermowattApiError):
+        c.get_status("S")
+    assert c.request_counts()["total"] == 1

@@ -120,3 +120,23 @@ async def test_anti_legionella_bit(hass, loaded, fake_client):
     await refresh_with(hass, loaded, fake_client, WaterHeaterSts="9")  # 8 + heating
     assert hass.states.get("binary_sensor.boiler_anti_legionella_cycle").state == "on"
     assert hass.states.get("binary_sensor.boiler_heating").state == "on"
+
+
+async def test_api_requests_sensor_stays_available(hass, loaded, fake_client):
+    from custom_components.thermann import api
+
+    state = hass.states.get("sensor.boiler_api_requests_24_h")
+    assert int(state.state) == 2  # setup: device list + first status poll
+    assert state.attributes["device_list"] == 1
+    assert state.attributes["status"] == 1
+    assert state.attributes["full_day"] is True  # fake client counting since epoch
+
+    def down(c):
+        raise api.ThermowattApiError("down")
+
+    fake_client.behaviour["status"] = down
+    await hass.data[DOMAIN][loaded.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    state = hass.states.get("sensor.boiler_api_requests_24_h")
+    assert state.state != "unavailable"
+    assert int(state.state) == 3

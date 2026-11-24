@@ -22,6 +22,7 @@ Rate-limit safety rules this client follows:
 from __future__ import annotations
 
 import base64
+from collections import deque
 import datetime
 import json
 import logging
@@ -37,6 +38,24 @@ from .const import API_KEY, BASE_URL
 _LOGGER = logging.getLogger(__name__)
 
 _TIMEOUT = 15
+
+# Request kinds counted for the "API requests (24 h)" sensor.
+REQUEST_KINDS = ("status", "token_renewal", "login", "command", "device_list")
+_DAY = 86400
+
+
+def _request_kind(method: str, url: str) -> str:
+    endpoint = url.rsplit("/", 1)[-1]
+    if endpoint == "status":
+        return "status"
+    if endpoint == "refresh":
+        return "token_renewal"
+    if endpoint == "login":
+        return "login"
+    if endpoint == "user-info":
+        return "device_list"
+    return "command" if method == "POST" else "device_list"
+
 
 # Never refresh early more than once per this many seconds, whatever the token
 # says (guards against a wrong clock or an odd `exp`).
@@ -137,6 +156,12 @@ class ThermowattClient:
         # lands inside the window.
         self.refresh_margin: float = 120
         self._last_early_refresh: float = 0.0
+        # (time, kind) of every request attempted in the last 24 h. Counted
+        # before sending, so attempts that failed in transit are included.
+        # In memory only: it restarts with Home Assistant (see counting_since).
+        self._sent: deque[tuple[float, str]] = deque()
+        self._sent_lock = threading.Lock()  # read from the event loop, written from workers
+        self.counting_since: float = time.time()
 
     # ------------------------------------------------------------------ tokens
 
@@ -163,7 +188,27 @@ class ThermowattClient:
             headers["seriale"] = serial
         return headers
 
+    def _prune_sent(self, now: float) -> None:
+        """Drop entries older than 24 h. Caller holds _sent_lock."""
+        while self._sent and self._sent[0][0] <= now - _DAY:
+            self._sent.popleft()
+
+    def request_counts(self) -> dict[str, int]:
+        """Requests attempted in the last 24 h, by kind, plus "total"."""
+        with self._sent_lock:
+            self._prune_sent(time.time())
+            kinds = [kind for _, kind in self._sent]
+        counts = dict.fromkeys(REQUEST_KINDS, 0)
+        for kind in kinds:
+            counts[kind] = counts.get(kind, 0) + 1
+        counts["total"] = sum(counts.values())
+        return counts
+
     def _send(self, method: str, url: str, headers: dict[str, str], **kwargs) -> requests.Response:
+        now = time.time()
+        with self._sent_lock:
+            self._prune_sent(now)
+            self._sent.append((now, _request_kind(method, url)))
         try:
             return self.session.request(method, url, headers=headers, verify=True, timeout=_TIMEOUT, **kwargs)
         except requests.RequestException as err:

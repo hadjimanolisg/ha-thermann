@@ -60,6 +60,9 @@
       },
       "time_remaining": {
         "name": "Time remaining"
+      },
+      "api_requests": {
+        "name": "API requests (24 h)"
       }
     },
     "binary_sensor": {
@@ -75,6 +78,12 @@
       "anti_legionella": {
         "name": "Anti-legionella cycle"
       }
+    }
+  },
+  "issues": {
+    "rate_limited": {
+      "title": "Thermowatt is limiting requests for this account",
+      "description": "The Thermowatt cloud refused requests because the account's request quota is used up (about 500 a day, shared with the Thermann app). Readings are paused and Home Assistant checks again {retry}; commands are refused until then. This notice clears itself when readings resume.\n\nIf it keeps happening, raise the poll interval under the integration's **Configure** (currently {interval} s) and close the Thermann app when you're not using it. The **API requests (24 h)** sensor shows how many requests Home Assistant sent."
     }
   }
 }

@@ -213,3 +213,42 @@ async def test_rate_limit_without_saved_heaters_still_reauths(hass, fake_client)
     entry = await setup(hass, WITH_TOKENS)
     assert entry.state is ConfigEntryState.SETUP_ERROR
     assert reauth_started(hass)
+
+
+async def test_repairs_notice_while_rate_limited(hass, fake_client):
+    from homeassistant.helpers import issue_registry as ir
+
+    entry = await setup(hass, WITH_TOKENS)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    issue_id = f"rate_limited_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+    def exhausted(c):
+        raise api.ThermowattRateLimitError("quota", daily=True)
+
+    fake_client.behaviour["status"] = exhausted
+    await coordinator.async_refresh()
+    issue = registry.async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.translation_placeholders == {"retry": "hourly", "interval": "300"}
+
+    fake_client.behaviour.pop("status")
+    await coordinator.async_refresh()
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_repairs_notice_on_rate_limited_start_and_cleared_on_unload(hass, fake_client):
+    from homeassistant.helpers import issue_registry as ir
+
+    def exhausted(c):
+        raise api.ThermowattRateLimitError("quota", daily=True)
+
+    fake_client.behaviour["list"] = exhausted
+    entry = await setup(hass, SAVED)
+    issue_id = f"rate_limited_{entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None

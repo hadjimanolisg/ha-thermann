@@ -51,6 +51,18 @@ class FakeClient:
         self.session = MagicMock()
         FakeClient.instances.append(self)
 
+    counting_since = 0.0
+
+    def request_counts(self):
+        kinds = {"status": "status", "list": "device_list", "login": "login",
+                 "set_temperature": "command", "set_mode": "command"}
+        counts = dict.fromkeys(("status", "token_renewal", "login", "command", "device_list"), 0)
+        for call in FakeClient.calls:
+            if call in kinds:
+                counts[kinds[call]] += 1
+        counts["total"] = sum(counts.values())
+        return counts
+
     @property
     def has_tokens(self):
         return all(self._t)

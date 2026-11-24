@@ -1,6 +1,8 @@
 """Sensor platform for Thermann Smart: temperatures, estimated energy, Wi-Fi signal."""
 from __future__ import annotations
 
+from datetime import timedelta
+
 from homeassistant.components.sensor import (
     RestoreSensor,
     SensorDeviceClass,
@@ -18,6 +20,8 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
+
+from .api import REQUEST_KINDS
 
 from . import ThermowattCoordinator
 from .const import CONF_ELEMENT_KW, DEFAULT_ELEMENT_KW, DOMAIN
@@ -39,6 +43,9 @@ async def async_setup_entry(
             ThermannWifiSignalSensor(coordinator, serial),
             ThermannTimeRemainingSensor(coordinator, serial),
         ]
+    # Requests are per account, so one sensor, on the first heater's device.
+    if coordinator.devices:
+        entities.append(ThermannApiRequestsSensor(coordinator, next(iter(coordinator.devices))))
     async_add_entities(entities)
 
 
@@ -113,6 +120,44 @@ class ThermannTimeRemainingSensor(ThermannEntity, SensorEntity):
     @property
     def native_value(self) -> int | None:
         return as_int(self.status.get("TimeRemaining"))
+
+
+class ThermannApiRequestsSensor(ThermannEntity, SensorEntity):
+    """Requests this integration sent to the Thermowatt cloud in the last 24 h.
+
+    The account's daily quota (about 500, shared with the app) is the reason
+    this exists: compare it with the app's daily-limit warnings. Counted
+    locally, so it costs no requests; restarts with Home Assistant.
+    """
+
+    _attr_translation_key = "api_requests"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "requests"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:cloud-upload-outline"
+
+    def __init__(self, coordinator: ThermowattCoordinator, serial: str) -> None:
+        super().__init__(coordinator, serial, "api_requests")
+
+    @property
+    def available(self) -> bool:
+        # A local count: still meaningful (most of all) while polls fail.
+        return True
+
+    @property
+    def native_value(self) -> int:
+        return self.coordinator.client.request_counts()["total"]
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        counts = self.coordinator.client.request_counts()
+        since = dt_util.utc_from_timestamp(self.coordinator.client.counting_since)
+        return {
+            **{kind: counts[kind] for kind in REQUEST_KINDS},
+            "counting_since": since.isoformat(),
+            # False until 24 h have passed since Home Assistant started.
+            "full_day": dt_util.utcnow() - since >= timedelta(days=1),
+        }
 
 
 class ThermannEnergySensor(ThermannEntity, RestoreSensor):

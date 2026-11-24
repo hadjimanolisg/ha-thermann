@@ -48,6 +48,7 @@ One device per heater on your account, with:
 - `Energy` - estimated kWh, from heating time x element power (set the element's kW under Configure). Only time between successful polls counts, so after an outage it can under-count but never over-count.
 - `Ambient temperature` (diagnostic)
 - `Wi-Fi signal` in dBm (diagnostic, disabled by default; enable it in the entity settings)
+- `API requests (24 h)` (diagnostic) - requests this integration sent to the Thermowatt cloud in the last 24 hours, split into status polls, token renewals, logins, commands and device-list fetches. Counted locally (costs nothing); it starts again when Home Assistant restarts (`counting_since`, `full_day`). Compare it with the app's daily-limit warnings.
 - `Time remaining` in minutes (diagnostic) - appears to be the heater's estimate of time left to reach the target while heating; 0 when idle
 
 **Binary sensors**
@@ -66,7 +67,7 @@ Thermowatt's cloud has an undocumented **daily request quota** per account, shar
 
 - Polls `/status` once per heater every **300 s (5 min)** by default: about 290 requests a day plus token refreshes, leaving room for the app. Configurable under Configure, **240-3600 s**; a value saved by an older version below 240 s is raised to 240 s, and the Configure form starts at 240 s. Recommended: 300 s or more. If the form shows old text such as "30-3600", refresh the browser page.
 - Recognises quota exhaustion however the API reports it: HTTP 429, or the more common HTTP 200 reply `{"success": false, "error": "Daily request limit exceeded"}`. Any other `success: false` reply counts as a failure too, never as a reading or a successful command.
-- After the daily quota runs out, checks **once an hour** until it resets (the reset time is unknown) and logs a warning. Other errors back off by doubling up to 15 min, honouring `Retry-After`. Polling returns to normal after the next good reading.
+- After the daily quota runs out, checks **once an hour** until it resets (the reset time is unknown), logs a warning and shows a notice under **Settings → Repairs**, which clears itself when readings resume. Other errors back off by doubling up to 15 min, honouring `Retry-After`. Polling returns to normal after the next good reading.
 - Refuses commands while the account is rate limited (nothing is queued or retried later), so they don't spend more of the quota.
 - If Home Assistant restarts while the account is rate limited, the integration still starts (using the heater list from the last successful start), shows the entities as unavailable and waits for the backoff. It doesn't ask for your password again.
 - Never retries a password login on its own. If the session can't be refreshed, polling stops and Home Assistant asks you to re-authenticate.

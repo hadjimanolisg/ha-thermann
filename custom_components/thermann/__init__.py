@@ -8,6 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import ThermowattApiError, ThermowattAuthError, ThermowattClient, ThermowattRateLimitError
@@ -26,6 +27,7 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+RATE_LIMIT_ISSUE = "rate_limited"
 PLATFORMS = [Platform.WATER_HEATER, Platform.SENSOR, Platform.BINARY_SENSOR]
 
 
@@ -85,11 +87,41 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         """The configured poll interval, without any backoff."""
         return self._base_interval
 
+    @property
+    def _issue_id(self) -> str:
+        return f"{RATE_LIMIT_ISSUE}_{self.config_entry.entry_id}"
+
+    @callback
+    def _async_rate_limit_issue(self, err: ThermowattRateLimitError | None) -> None:
+        """Show a Repairs notice while rate limited; remove it when polling recovers."""
+        if err is None:
+            ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
+            return
+        minutes = round((self.update_interval or self._base_interval).total_seconds() / 60)
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=RATE_LIMIT_ISSUE,
+            translation_placeholders={
+                "retry": "hourly" if err.daily else f"in about {minutes} minutes",
+                "interval": str(int(self._base_interval.total_seconds())),
+            },
+        )
+
+    @callback
+    def async_clear_issue(self) -> None:
+        ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
+
     @callback
     def async_start_rate_limited(self, err: ThermowattRateLimitError) -> None:
         """Start after a rate limit at setup: no data yet, first poll after the backoff."""
         self.rate_limited = True
         self._back_off(err.retry_after, quota=err.daily)
+        self._async_rate_limit_issue(err)
         self.async_set_update_error(UpdateFailed(f"{err}; first poll in {self.update_interval}"))
 
     def _poll_all(self) -> dict[str, dict]:
@@ -127,6 +159,7 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
                 )
             self.rate_limited = True
             self._back_off(err.retry_after, quota=err.daily)
+            self._async_rate_limit_issue(err)
             raise UpdateFailed(f"{err}; backing off to {self.update_interval}") from err
         except ThermowattApiError as err:
             self._back_off(None)
@@ -135,6 +168,8 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             # A refresh may have rotated the tokens even if the poll failed.
             async_save_tokens(self.hass, self.config_entry, self.client)
 
+        if self.rate_limited:
+            self._async_rate_limit_issue(None)
         self.rate_limited = False
         if self.update_interval != self._base_interval:
             _LOGGER.info("Thermowatt poll recovered; back to %s interval", self._base_interval)
@@ -243,5 +278,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         coordinator: ThermowattCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator.async_clear_issue()
         await hass.async_add_executor_job(coordinator.client.session.close)
     return unloaded
