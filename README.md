@@ -39,6 +39,8 @@ backend has been observed to reject requests claiming an old app version).
 One `water_heater` entity per boiler on your account, with:
 - Current and target temperature
 - Operation modes: `off`, `eco`, `manual`, `auto`, `holiday`
+- Target temperature shows what the heater is aiming for **right now**: your setpoint in manual; in auto, the schedule temperature during scheduled hours and the "T comfort auto" temperature outside them
+- The temperature control is only offered in **manual** mode. The Thermowatt API sets the temperature through manual mode, so changing it in any other mode would also switch the heater to manual and off its schedule. To change it, switch to manual first.
 - A `Heating` binary sensor (whether the element is actively on right now)
 - A `Temperature` sensor and an estimated `Energy` sensor (kWh, from heating time x element power)
 

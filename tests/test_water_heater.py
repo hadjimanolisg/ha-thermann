@@ -84,7 +84,8 @@ async def test_out_of_range_setpoint_rejected_without_api_call(hass, loaded, fak
 async def test_extra_attributes(hass, loaded):
     attrs = hass.states.get(ENTITY).attributes
     assert attrs["desired_temperature"] == 60
-    assert attrs["schedule_temperature"] == 45
+    assert attrs["schedule_comfort_temperature"] == 45
+    assert attrs["manual_setpoint"] == 60
     assert attrs["boost_temperature"] == 70
     assert attrs["frost_protection_temperature"] == 16
     assert attrs["demand_response_status"] == 0
@@ -98,3 +99,56 @@ async def test_device_page_shows_firmware(hass, loaded):
     assert device.hw_version == "Wi-Fi module 01.02.03"
     assert device.model_id == "TMEC"
     assert device.serial_number == "SN1"
+
+
+async def test_manual_mode_offers_temperature_control(hass, loaded):
+    from homeassistant.components.water_heater import WaterHeaterEntityFeature as F
+
+    features = hass.states.get(ENTITY).attributes["supported_features"]
+    assert features == F.TARGET_TEMPERATURE | F.OPERATION_MODE
+
+
+async def test_auto_mode_follows_schedule_and_hides_control(hass, loaded, fake_client):
+    """Auto outside scheduled hours: heater aims for T comfort auto (20)."""
+    from homeassistant.components.water_heater import WaterHeaterEntityFeature as F
+    from homeassistant.exceptions import ServiceValidationError
+
+    fake_client.behaviour["status"] = lambda c: {**STATUS, "Cmd": "17", "T_SetPoint": "45", "T_dsrd": "20"}
+    await hass.data[DOMAIN][loaded.entry_id].async_refresh()
+    await hass.async_block_till_done()
+
+    state = hass.states.get(ENTITY)
+    assert state.state == "auto"
+    assert state.attributes["temperature"] == 20
+    assert state.attributes["manual_setpoint"] == 45
+    assert state.attributes["supported_features"] == F.OPERATION_MODE
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            WH_DOMAIN, "set_temperature", {"entity_id": ENTITY, "temperature": 50}, blocking=True
+        )
+    assert "set_temperature" not in fake_client.calls
+
+
+async def test_target_falls_back_to_setpoint(hass, loaded, fake_client):
+    status = {k: v for k, v in STATUS.items() if k != "T_dsrd"}
+    fake_client.behaviour["status"] = lambda c: dict(status)
+    await hass.data[DOMAIN][loaded.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).attributes["temperature"] == 60
+
+
+async def test_switching_to_manual_restores_setpoint(hass, loaded, fake_client):
+    seen = []
+    fake_client.behaviour["status"] = lambda c: {**STATUS, "Cmd": "17", "T_SetPoint": "47", "T_dsrd": "20"}
+    await hass.data[DOMAIN][loaded.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    original = fake_client.set_mode
+    fake_client.set_mode = lambda self, serial, mode, setpoint=60: seen.append((mode, setpoint))
+    try:
+        await hass.services.async_call(
+            WH_DOMAIN, "set_operation_mode", {"entity_id": ENTITY, "operation_mode": "manual"}, blocking=True
+        )
+    finally:
+        fake_client.set_mode = original
+    assert seen == [("manual", 47)]

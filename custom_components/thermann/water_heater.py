@@ -21,11 +21,16 @@ from .entity import ThermannEntity, as_float, as_int
 
 _LOGGER = logging.getLogger(__name__)
 
-# Extra /status fields shown as attributes. Their exact meaning isn't
-# documented; names describe what they appear to be from observed values.
+# Extra /status fields shown as attributes. Meanings confirmed against the
+# app where noted; the others are best guesses from observed values.
 EXTRA_ATTRIBUTES = {
+    # What the heater is aiming for right now (confirmed): the setpoint in
+    # manual; in auto, the schedule temperature inside scheduled hours and
+    # "T comfort auto" (e.g. 20) outside them.
     "desired_temperature": "T_dsrd",
-    "schedule_temperature": "Tmsch",
+    # The temperature manual mode uses (confirmed: changes with /manual).
+    "manual_setpoint": "T_SetPoint",
+    "schedule_comfort_temperature": "Tmsch",
     "boost_temperature": "TBoost",
     "time_remaining": "TimeRemaining",
     "frost_protection_temperature": "T_set_off",
@@ -72,10 +77,6 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
 
     _attr_name = None
     _attr_operation_list = OPERATION_MODES
-    _attr_supported_features = (
-        WaterHeaterEntityFeature.TARGET_TEMPERATURE
-        | WaterHeaterEntityFeature.OPERATION_MODE
-    )
 
     def __init__(self, coordinator: ThermowattCoordinator, serial: str) -> None:
         super().__init__(coordinator, serial, key=None)
@@ -102,7 +103,26 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
 
     @property
     def native_target_temperature(self) -> float | None:
-        return as_float(self.status.get("T_SetPoint"))
+        """What the heater is aiming for now, in every mode (T_dsrd).
+
+        In auto that follows the schedule, so it can differ from the manual
+        setpoint. Falls back to T_SetPoint if the heater doesn't report it.
+        """
+        desired = as_float(self.status.get("T_dsrd"))
+        return desired if desired is not None else as_float(self.status.get("T_SetPoint"))
+
+    @property
+    def supported_features(self) -> WaterHeaterEntityFeature:
+        """Offer the temperature control only in manual mode.
+
+        The API sets the temperature through /manual, which also switches the
+        heater to manual. Hiding the control in other modes stops Home
+        Assistant from quietly taking the heater off its schedule.
+        """
+        features = WaterHeaterEntityFeature.OPERATION_MODE
+        if self.current_operation == "manual":
+            features |= WaterHeaterEntityFeature.TARGET_TEMPERATURE
+        return features
 
     @property
     def current_operation(self) -> str | None:
@@ -136,6 +156,12 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         temp = int(kwargs[ATTR_TEMPERATURE])
+        if self.current_operation != "manual":
+            # Automations and scripts can still call the service directly.
+            raise ServiceValidationError(
+                "The temperature can only be set in manual mode: setting it "
+                "switches the heater to manual. Switch to manual first."
+            )
         if not self.min_temp <= temp <= self.max_temp:
             raise ServiceValidationError(
                 f"{temp} °C is outside this heater's range "
