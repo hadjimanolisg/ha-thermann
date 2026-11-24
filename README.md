@@ -36,13 +36,28 @@ backend has been observed to reject requests claiming an old app version).
 
 ## What you get
 
-One `water_heater` entity per boiler on your account, with:
-- Current and target temperature
+One device per heater on your account, with:
+
+**Water heater**
+- Current and target temperature, with the allowed range read from the heater itself (20-70 °C on a Thermann Smart Electric)
 - Operation modes: `off`, `eco`, `manual`, `auto`, `holiday`
 - Target temperature shows what the heater is aiming for **right now**: your setpoint in manual; in auto, the schedule temperature during scheduled hours and the "T comfort auto" temperature outside them
 - The temperature control is only offered in **manual** mode. The Thermowatt API sets the temperature through manual mode, so changing it in any other mode would also switch the heater to manual and off its schedule. To change it, switch to manual first.
-- A `Heating` binary sensor (whether the element is actively on right now)
-- A `Temperature` sensor and an estimated `Energy` sensor (kWh, from heating time x element power)
+- Attributes: `desired_temperature` (current target), `manual_setpoint`, `schedule_comfort_temperature` (auto, during scheduled hours), `boost_temperature`, `time_remaining`, `frost_protection_temperature`, `demand_response_status`
+
+**Sensors**
+- `Temperature` - current water temperature
+- `Energy` - estimated kWh, from heating time x element power (set the element's kW under Configure)
+- `Ambient temperature` (diagnostic)
+- `Wi-Fi signal` in dBm (diagnostic, disabled by default; enable it in the entity settings)
+
+**Binary sensors**
+- `Heating` - the element is on right now; raw device flags in the `status_flags` attribute
+- `Fault` (diagnostic) - on when the heater reports an error code; codes in the attributes
+
+The device page also shows the heater and Wi-Fi module firmware versions.
+
+Everything comes from one `/status` request per heater per poll; extra entities don't add requests.
 
 ## Polling and rate limits
 
