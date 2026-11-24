@@ -62,7 +62,7 @@ Everything comes from one `/status` request per heater per poll; extra entities 
 
 Thermowatt's cloud has an undocumented **daily request quota** per account, shared with the Thermann app. Other projects measured a "Daily request limit exceeded" rejection after about **470 requests in a day**, and repeated rejections at 60 s polling (~1,500 requests a day). This integration:
 
-- Polls `/status` once per heater every **300 s (5 min)** by default: about 290 requests a day plus token refreshes, leaving room for the app. Configurable under Configure, **240-3600 s**; a saved value below 240 s is raised to 240 s.
+- Polls `/status` once per heater every **300 s (5 min)** by default: about 290 requests a day plus token refreshes, leaving room for the app. Configurable under Configure, **240-3600 s**; a value saved by an older version below 240 s is raised to 240 s, and the Configure form starts at 240 s. Recommended: 300 s or more. If the form shows old text such as "30-3600", refresh the browser page.
 - Recognises quota exhaustion however the API reports it: HTTP 429, or the more common HTTP 200 reply `{"success": false, "error": "Daily request limit exceeded"}`. Any other `success: false` reply counts as a failure too, never as a reading or a successful command.
 - After the daily quota runs out, checks **once an hour** until it resets (the reset time is unknown) and logs a warning. Other errors back off by doubling up to 15 min, honouring `Retry-After`. Polling returns to normal after the next good reading.
 - Refuses commands while the account is rate limited (nothing is queued or retried later), so they don't spend more of the quota.

@@ -84,3 +84,18 @@ async def test_options_flow_validates_interval(hass, fake_client):
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["poll_interval"] == 600
+
+
+async def test_options_form_starts_at_minimum_for_old_low_value(hass, fake_client):
+    """An entry saved with 60 s (allowed before 0.6.0) can be submitted unchanged."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={**BASE_DATA, "access_token": "a", "refresh_token": "r"},
+        options={"element_kw": 3.0, "poll_interval": 60},
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    # Leaving the field as shown uses the form's default.
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"element_kw": 3.0})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["poll_interval"] == 240

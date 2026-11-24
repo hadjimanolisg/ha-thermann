@@ -164,7 +164,11 @@ class ThermannOptionsFlow(config_entries.OptionsFlow):
                 ): vol.Coerce(float),
                 vol.Required(
                     CONF_POLL_INTERVAL,
-                    default=options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
+                    # Older versions allowed lower values; start the form at
+                    # the value actually in use so it can be submitted as is.
+                    default=max(
+                        options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL), MIN_POLL_INTERVAL
+                    ),
                 ): vol.All(vol.Coerce(int), vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL)),
             }
         )
