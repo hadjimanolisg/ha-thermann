@@ -58,7 +58,7 @@ One device per heater on your account, with:
 - `Anti-legionella cycle` (diagnostic) - on while the heater runs its sanitation cycle (inferred from another project's observations)
 - `High ambient pause` (diagnostic) - heating is paused because it's too hot around the heater; it resumes by itself, so this isn't counted as a fault
 
-The device page also shows the heater and Wi-Fi module firmware versions, and offers **Download diagnostics** for bug reports (email, tokens, serial numbers and names are removed).
+On Home Assistant 2026.3 and later the integration shows the Thermowatt logo, with a light version for dark themes. The device page also shows the heater and Wi-Fi module firmware versions, and offers **Download diagnostics** for bug reports (email, tokens, serial numbers and names are removed).
 
 Everything comes from one `/status` request per heater per poll; extra entities don't add requests.
 
@@ -91,6 +91,8 @@ This project builds on:
 
 - [waterheater-dev/ha-thermowatt-heater](https://github.com/waterheater-dev/ha-thermowatt-heater) - the original Home Assistant add-on that reverse-engineered the Thermowatt cloud API.
 - [MitchellSaunders/ha-thermann](https://github.com/MitchellSaunders/ha-thermann) - the port of that add-on to a native integration, which this repository was forked from.
+
+Thermowatt and its logo are trademarks of Thermowatt S.p.A., used only to identify the heaters this integration works with. This is an independent project, not made or endorsed by Thermowatt.
 
 Since then it has been largely reworked: rate-limit-safe polling and login handling, no stored password, re-authentication, device-reported limits, fault and diagnostic sensors, Home Assistant 2026.11 support, and tests. Report problems in [this repository's issues](https://github.com/m4dm4xcy/ha-thermann/issues), not upstream.
 

@@ -23,9 +23,8 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # brands: needs a brand/icon.png in this repo; license: waiting
-          # for the upstream authors to license their code.
-          ignore: brands license
+          # license: waiting for the upstream authors to license their code.
+          ignore: license
 
   tests:
     name: tests (${{ matrix.name }})
