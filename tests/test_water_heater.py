@@ -258,3 +258,17 @@ async def test_failed_command_leaves_state_alone(hass, loaded, fake_client):
             WH_DOMAIN, "set_operation_mode", {"entity_id": ENTITY, "operation_mode": "eco"}, blocking=True
         )
     assert hass.states.get(ENTITY).state == "manual"
+
+
+async def test_every_mode_has_a_display_name(hass, loaded):
+    from homeassistant.helpers.translation import async_get_translations
+
+    from custom_components.thermann.const import OPERATION_MODES
+
+    strings = await async_get_translations(hass, "en", "entity", [DOMAIN])
+    base = f"component.{DOMAIN}.entity.water_heater.heater"
+    for mode in OPERATION_MODES:
+        assert strings[f"{base}.state.{mode}"] == mode.capitalize()
+        assert strings[f"{base}.state_attributes.operation_mode.state.{mode}"] == mode.capitalize()
+    # The entity keeps the device's name.
+    assert hass.states.get(ENTITY).name == "Boiler"

@@ -45,6 +45,28 @@
     }
   },
   "entity": {
+    "water_heater": {
+      "heater": {
+        "state": {
+          "off": "Off",
+          "eco": "Eco",
+          "manual": "Manual",
+          "auto": "Auto",
+          "holiday": "Holiday"
+        },
+        "state_attributes": {
+          "operation_mode": {
+            "state": {
+              "off": "Off",
+              "eco": "Eco",
+              "manual": "Manual",
+              "auto": "Auto",
+              "holiday": "Holiday"
+            }
+          }
+        }
+      }
+    },
     "sensor": {
       "current_temperature": {
         "name": "Temperature"

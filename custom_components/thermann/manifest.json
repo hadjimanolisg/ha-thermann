@@ -9,5 +9,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/m4dm4xcy/ha-thermann/issues",
   "requirements": [],
-  "version": "0.9.2"
+  "version": "0.9.3"
 }

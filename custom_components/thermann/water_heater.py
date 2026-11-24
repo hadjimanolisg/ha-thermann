@@ -79,6 +79,9 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
     """Representation of one Thermowatt/Thermann Smart boiler."""
 
     _attr_name = None
+    # Names for all five modes (translations/en.json). HA only translates its
+    # own modes (off, eco); without this manual/auto/holiday show raw.
+    _attr_translation_key = "heater"
     _attr_operation_list = OPERATION_MODES
 
     def __init__(self, coordinator: ThermowattCoordinator, serial: str) -> None:

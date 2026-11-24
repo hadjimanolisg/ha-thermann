@@ -38,7 +38,7 @@ One device per heater on your account, with:
 
 **Water heater**
 - Current and target temperature, with the allowed range read from the heater itself (20-70 °C on a Thermann Smart Electric)
-- Operation modes: `off`, `eco`, `manual`, `auto`, `holiday`. "Off" is recognised whichever mode the heater was turned off from.
+- Operation modes: Off, Eco, Manual, Auto, Holiday (`off`, `eco`, `manual`, `auto`, `holiday` in automations). "Off" is recognised whichever mode the heater was turned off from.
 - Target temperature shows what the heater is aiming for **right now**: your setpoint in manual; in auto, the schedule temperature during scheduled hours and the "T comfort auto" temperature outside them
 - The temperature control is only offered in **manual** mode. The Thermowatt API sets the temperature through manual mode, so changing it in any other mode would also switch the heater to manual and off its schedule. To change it, switch to manual first.
 - Mode and temperature changes show in Home Assistant as soon as the heater's cloud accepts them; the next poll then shows what the heater actually reports. In eco, auto and holiday the target temperature updates at that poll, because it comes from the heater.
