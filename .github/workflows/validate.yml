@@ -23,8 +23,8 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # brands: needs a PR to home-assistant/brands; license is the
-          # original authors' call (none upstream).
+          # brands: needs a brand/icon.png in this repo; license: waiting
+          # for the upstream authors to license their code.
           ignore: brands license
 
   tests:
