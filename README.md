@@ -6,9 +6,7 @@ Electric** range. Talks directly to the Thermowatt cloud API used by the
 MyThermowatt / Thermann Control apps - no separate MQTT broker or Docker
 add-on required.
 
-This started as a rewrite of
-[waterheater-dev/ha-thermowatt-heater](https://github.com/waterheater-dev/ha-thermowatt-heater)
-(an add-on), restructured as a proper `custom_components` integration with:
+Based on earlier community work (see [Credits](#credits)), restructured as a proper `custom_components` integration with:
 
 - Config flow (UI setup, no YAML)
 - Your password is used once to sign in and is **not stored**. Only the session tokens are kept (in `.storage/core.config_entries`, which is plain JSON - treat HA backups as sensitive)
@@ -76,6 +74,15 @@ If your account was locked, wait until you can sign in to the app again before r
 - Cloud-dependent: if Thermowatt's backend or your internet is down, this integration can't reach your heater (same as the official app).
 - The API was reverse-engineered from app traffic, not officially documented or supported by Thermowatt/Thermann. Endpoint or auth changes on their end can break this without notice - if that happens, check whether the app version bumped and update the `app_version` option first.
 - Not affiliated with or endorsed by Thermowatt, Thermann, Rheem, or Ariston.
+
+## Credits
+
+This project builds on:
+
+- [waterheater-dev/ha-thermowatt-heater](https://github.com/waterheater-dev/ha-thermowatt-heater) - the original Home Assistant add-on that reverse-engineered the Thermowatt cloud API.
+- [MitchellSaunders/ha-thermann](https://github.com/MitchellSaunders/ha-thermann) - the port of that add-on to a native integration, which this repository was forked from.
+
+Since then it has been largely reworked: rate-limit-safe polling and login handling, no stored password, re-authentication, device-reported limits, fault and diagnostic sensors, Home Assistant 2026.11 support, and tests. Report problems in [this repository's issues](https://github.com/hadjimanolisg/ha-thermann/issues), not upstream.
 
 ## Development
 
