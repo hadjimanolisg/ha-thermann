@@ -18,7 +18,7 @@ Based on earlier community work (see [Credits](#credits)), restructured as a pro
 ### Via HACS (custom repository)
 1. HACS -> Integrations -> ⋮ -> **Custom repositories**
 2. Add `https://github.com/m4dm4xcy/ha-thermann`, category **Integration**
-3. Search for "Thermann Smart", install, restart Home Assistant
+3. Search for "Thermann Smart", install, restart Home Assistant. HACS installs the latest [release](https://github.com/m4dm4xcy/ha-thermann/releases) and notifies you of new ones.
 
 ### Manual
 Copy `custom_components/thermann/` into your `config/custom_components/` directory and restart Home Assistant.
