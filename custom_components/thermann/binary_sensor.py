@@ -1,4 +1,4 @@
-"""Binary sensors for Thermann Smart: element heating, and heater fault."""
+"""Binary sensors for Thermann Smart: element heating, heater fault, high ambient pause."""
 from __future__ import annotations
 
 from typing import Any
@@ -16,6 +16,11 @@ from . import ThermowattCoordinator
 from .const import DOMAIN
 from .entity import ThermannEntity, as_int
 
+# NonVolatileErrors bit 0x02 coincided with the app's "heating paused, high
+# ambient temperature" notice (observed by another project on firmware
+# 07.00.09.06). The heater resumes by itself, so it isn't treated as a fault.
+HIGH_AMBIENT_PAUSE_BIT = 0x02
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -26,6 +31,7 @@ async def async_setup_entry(
         entities += [
             ThermannHeatingBinarySensor(coordinator, serial),
             ThermannFaultBinarySensor(coordinator, serial),
+            ThermannHighAmbientPauseBinarySensor(coordinator, serial),
         ]
     async_add_entities(entities)
 
@@ -68,12 +74,31 @@ class ThermannFaultBinarySensor(ThermannEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        codes = self._codes()
-        if all(code is None for code in codes):
+        volatile, non_volatile = self._codes()
+        if volatile is None and non_volatile is None:
             return None
-        return any(code for code in codes)
+        # The high-ambient pause bit is reported by its own sensor instead.
+        return bool(volatile or ((non_volatile or 0) & ~HIGH_AMBIENT_PAUSE_BIT))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         volatile, non_volatile = self._codes()
         return {"volatile_errors": volatile, "non_volatile_errors": non_volatile}
+
+
+class ThermannHighAmbientPauseBinarySensor(ThermannEntity, BinarySensorEntity):
+    """On while heating is paused because the ambient temperature is too high.
+
+    The heater resumes by itself as it cools down; don't force heating.
+    """
+
+    _attr_translation_key = "high_ambient_pause"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: ThermowattCoordinator, serial: str) -> None:
+        super().__init__(coordinator, serial, "high_ambient_pause")
+
+    @property
+    def is_on(self) -> bool | None:
+        non_volatile = as_int(self.status.get("NonVolatileErrors"))
+        return bool(non_volatile & HIGH_AMBIENT_PAUSE_BIT) if non_volatile is not None else None

@@ -20,6 +20,8 @@ from .const import (
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
     MAX_BACKOFF_INTERVAL,
+    MIN_POLL_INTERVAL,
+    QUOTA_BACKOFF_INTERVAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,9 +51,14 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         client: ThermowattClient,
         devices: list[dict],
     ) -> None:
-        self._base_interval = timedelta(
-            seconds=entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
-        )
+        configured = entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
+        if configured < MIN_POLL_INTERVAL:
+            _LOGGER.warning(
+                "Poll interval %s s is below the %s s minimum (the account's daily "
+                "request quota is about 500); using %s s",
+                configured, MIN_POLL_INTERVAL, MIN_POLL_INTERVAL,
+            )
+        self._base_interval = timedelta(seconds=max(configured, MIN_POLL_INTERVAL))
         super().__init__(
             hass,
             _LOGGER,
@@ -66,13 +73,25 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         # Options at setup time; lets the update listener tell an options
         # change (needs reload) from a token save (must NOT reload).
         self.options_snapshot = dict(entry.options)
+        # True from a rate-limit/quota rejection until the next good poll.
+        # Commands are refused meanwhile, so they don't spend more quota.
+        self.rate_limited = False
 
     def _poll_all(self) -> dict[str, dict]:
         # One /status call per device. /user-info is account-level and only
         # fetched once at setup.
         return {serial: self.client.get_status(serial) for serial in self.devices}
 
-    def _back_off(self, retry_after: float | None) -> None:
+    def _back_off(self, retry_after: float | None, quota: bool = False) -> None:
+        if quota:
+            # Daily quota exhausted: the reset time is unknown, so check hourly
+            # rather than spending requests that will only be refused.
+            self.update_interval = max(
+                timedelta(seconds=QUOTA_BACKOFF_INTERVAL),
+                timedelta(seconds=retry_after or 0),
+                self._base_interval,
+            )
+            return
         current = self.update_interval or self._base_interval
         wanted = max(current * 2, timedelta(seconds=retry_after or 0))
         ceiling = max(timedelta(seconds=MAX_BACKOFF_INTERVAL), self._base_interval)
@@ -86,7 +105,13 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             # retry a password login automatically.
             raise ConfigEntryAuthFailed(str(err)) from err
         except ThermowattRateLimitError as err:
-            self._back_off(err.retry_after)
+            if err.daily and not self.rate_limited:
+                _LOGGER.warning(
+                    "Thermowatt daily request limit reached; checking hourly until it resets. "
+                    "If this repeats, raise the poll interval under Configure."
+                )
+            self.rate_limited = True
+            self._back_off(err.retry_after, quota=err.daily)
             raise UpdateFailed(f"{err}; backing off to {self.update_interval}") from err
         except ThermowattApiError as err:
             self._back_off(None)
@@ -95,6 +120,7 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             # A refresh may have rotated the tokens even if the poll failed.
             async_save_tokens(self.hass, self.config_entry, self.client)
 
+        self.rate_limited = False
         if self.update_interval != self._base_interval:
             _LOGGER.info("Thermowatt poll recovered; back to %s interval", self._base_interval)
             self.update_interval = self._base_interval

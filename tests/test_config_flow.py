@@ -77,10 +77,10 @@ async def test_options_flow_validates_interval(hass, fake_client):
 
     with pytest.raises(InvalidData):
         await hass.config_entries.options.async_configure(
-            result["flow_id"], {"element_kw": 3.6, "poll_interval": 5}
+            result["flow_id"], {"element_kw": 3.6, "poll_interval": 120}
         )
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"element_kw": 3.6, "poll_interval": 120}
+        result["flow_id"], {"element_kw": 3.6, "poll_interval": 600}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options["poll_interval"] == 120
+    assert entry.options["poll_interval"] == 600

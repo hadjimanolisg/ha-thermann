@@ -152,3 +152,31 @@ async def test_switching_to_manual_restores_setpoint(hass, loaded, fake_client):
     finally:
         fake_client.set_mode = original
     assert seen == [("manual", 47)]
+
+
+@pytest.mark.parametrize(
+    ("cmd", "mode"),
+    [("9", "manual"), ("3", "eco"), ("17", "auto"), ("65", "holiday"),
+     ("8", "off"), ("16", "off"), ("64", "off"), ("2", "off")],
+)
+async def test_cmd_bit_field_decoding(hass, loaded, fake_client, cmd, mode):
+    fake_client.behaviour["status"] = lambda c: {**STATUS, "Cmd": cmd}
+    await hass.data[DOMAIN][loaded.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).state == mode
+
+
+async def test_unknown_cmd_is_not_guessed(hass, loaded, fake_client):
+    fake_client.behaviour["status"] = lambda c: {**STATUS, "Cmd": "0"}
+    await hass.data[DOMAIN][loaded.entry_id].async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).state == "unknown"
+
+
+async def test_commands_refused_while_rate_limited(hass, loaded, fake_client):
+    hass.data[DOMAIN][loaded.entry_id].rate_limited = True
+    with pytest.raises(HomeAssistantError, match="rate limiting"):
+        await hass.services.async_call(
+            WH_DOMAIN, "set_operation_mode", {"entity_id": ENTITY, "operation_mode": "eco"}, blocking=True
+        )
+    assert "set_mode" not in fake_client.calls

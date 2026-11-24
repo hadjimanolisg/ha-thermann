@@ -16,8 +16,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ThermowattCoordinator
 from .api import ThermowattApiError
-from .const import CMD_TO_MODE, DEFAULT_TEMP, DOMAIN, MAX_TEMP, MIN_TEMP, OPERATION_MODES
-from .entity import ThermannEntity, as_float, as_int
+from .const import DEFAULT_TEMP, DOMAIN, MAX_TEMP, MIN_TEMP, OPERATION_MODES
+from .entity import ThermannEntity, as_float, as_int, decode_mode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -126,8 +126,7 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
 
     @property
     def current_operation(self) -> str | None:
-        cmd = as_int(self.status.get("Cmd"))
-        return CMD_TO_MODE.get(cmd) if cmd is not None else None
+        return decode_mode(self.status.get("Cmd"))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -147,6 +146,12 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
         super()._handle_coordinator_update()
 
     async def _async_send(self, func, *args) -> None:
+        if self.coordinator.rate_limited:
+            # Don't spend more of an exhausted quota; nothing is queued.
+            raise HomeAssistantError(
+                "Thermowatt is rate limiting this account; commands are paused "
+                "until a status poll succeeds again. Try later or use the app."
+            )
         try:
             await self.hass.async_add_executor_job(func, *args)
         except ThermowattApiError as err:

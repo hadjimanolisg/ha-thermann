@@ -7,7 +7,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import ThermowattCoordinator
-from .const import DOMAIN
+from .const import CMD_FAMILIES, CMD_ON_BIT, DOMAIN
 
 
 def as_int(value: Any) -> int | None:
@@ -23,6 +23,21 @@ def as_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def decode_mode(cmd: Any) -> str | None:
+    """Cmd bit field -> HA operation mode; None if unknown (never guessed).
+
+    9 -> manual, 3 -> eco, 17 -> auto, 65 -> holiday; any known family with
+    the on bit cleared (8, 16, 64, 2) -> off.
+    """
+    value = as_int(cmd)
+    if value is None:
+        return None
+    family = CMD_FAMILIES.get(value & ~CMD_ON_BIT)
+    if family is None:
+        return None
+    return family if value & CMD_ON_BIT else "off"
 
 
 class ThermannEntity(CoordinatorEntity[ThermowattCoordinator]):

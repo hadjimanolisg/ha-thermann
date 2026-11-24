@@ -81,7 +81,7 @@ def test_login_429_is_rate_limit_not_auth():
 
 
 def test_api_key_only_on_auth_calls():
-    c = client([resp(200, TOKENS), resp(200, {"result": {}})], tokens=(None, None))
+    c = client([resp(200, TOKENS), resp(200, {"result": {"T_Avg": "40"}})], tokens=(None, None))
     c.login()
     c.get_status("S")
     login_h, status_h = (call.kwargs["headers"] for call in c.session.request.call_args_list)
@@ -100,3 +100,49 @@ def test_network_error_is_wrapped():
     c = client([requests.ConnectionError("boom")])
     with pytest.raises(api.ThermowattApiError):
         c.get_status("S")
+
+
+QUOTA = {"success": False, "error": "Daily request limit exceeded"}
+
+
+def test_quota_in_200_body_is_a_daily_rate_limit():
+    c = client([resp(200, QUOTA)])
+    with pytest.raises(api.ThermowattRateLimitError) as err:
+        c.get_status("S")
+    assert err.value.daily is True
+
+
+def test_quota_on_a_command_is_not_reported_as_success():
+    c = client([resp(200, QUOTA)])
+    with pytest.raises(api.ThermowattRateLimitError):
+        c.set_mode("S", "eco")
+
+
+def test_other_unsuccessful_body_is_an_error():
+    c = client([resp(200, {"success": False, "error": "Wrong mode"})])
+    with pytest.raises(api.ThermowattApiError) as err:
+        c.get_status("S")
+    assert not isinstance(err.value, api.ThermowattRateLimitError)
+
+
+def test_empty_status_is_not_a_reading():
+    c = client([resp(200, {"success": True, "result": {}})])
+    with pytest.raises(api.ThermowattApiError):
+        c.get_status("S")
+
+
+def test_command_with_empty_body_is_fine():
+    r = resp(200)
+    r.json.side_effect = ValueError("no body")
+    c = client([r])
+    c.set_mode("S", "off")
+
+
+def test_quota_during_refresh_and_login():
+    c = client([resp(401), resp(200, QUOTA)])
+    with pytest.raises(api.ThermowattRateLimitError):
+        c.get_status("S")
+    c = client([resp(200, QUOTA)], tokens=(None, None))
+    with pytest.raises(api.ThermowattRateLimitError) as err:
+        c.login()
+    assert err.value.daily is True

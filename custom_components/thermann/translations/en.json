@@ -35,7 +35,7 @@
         "title": "Thermann Smart settings",
         "data": {
           "element_kw": "Heating element power (kW) - used to estimate energy use",
-          "poll_interval": "Poll interval in seconds (30-3600). Lower values risk the account being rate limited."
+          "poll_interval": "Poll interval in seconds (240-3600). The account's daily request quota is about 500 and is shared with the app, so don't go lower."
         }
       }
     }
@@ -61,6 +61,9 @@
       },
       "fault": {
         "name": "Fault"
+      },
+      "high_ambient_pause": {
+        "name": "High ambient pause"
       }
     }
   }

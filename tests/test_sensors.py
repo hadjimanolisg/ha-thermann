@@ -59,3 +59,15 @@ async def test_heating_uses_bit_zero(hass, loaded, fake_client):
     state = hass.states.get("binary_sensor.boiler_heating")
     assert state.state == "off"
     assert state.attributes["status_flags"] == 32
+
+
+async def test_high_ambient_pause_is_not_a_fault(hass, loaded, fake_client):
+    assert hass.states.get("binary_sensor.boiler_high_ambient_pause").state == "off"
+    await refresh_with(hass, loaded, fake_client, NonVolatileErrors="2")
+    assert hass.states.get("binary_sensor.boiler_high_ambient_pause").state == "on"
+    assert hass.states.get("binary_sensor.boiler_fault").state == "off"
+
+    # Pause plus a real error bit: both on.
+    await refresh_with(hass, loaded, fake_client, NonVolatileErrors="6")
+    assert hass.states.get("binary_sensor.boiler_high_ambient_pause").state == "on"
+    assert hass.states.get("binary_sensor.boiler_fault").state == "on"

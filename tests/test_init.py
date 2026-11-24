@@ -78,7 +78,7 @@ async def test_network_error_is_not_ready(hass, fake_client):
 async def test_backoff_doubles_caps_and_resets(hass, fake_client):
     entry = await setup(hass, WITH_TOKENS)
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    assert coordinator.update_interval == timedelta(seconds=60)
+    assert coordinator.update_interval == timedelta(seconds=300)
 
     errors = [api.ThermowattRateLimitError("429")] * 5 + [api.ThermowattApiError("500")]
 
@@ -91,11 +91,12 @@ async def test_backoff_doubles_caps_and_resets(hass, fake_client):
         with pytest.raises(UpdateFailed):
             await coordinator._async_update_data()
         seen.append(int(coordinator.update_interval.total_seconds()))
-    assert seen == [120, 240, 480, 900, 900, 900]
+    assert seen == [600, 900, 900, 900, 900, 900]
 
     fake_client.behaviour.pop("status")
     await coordinator._async_update_data()
-    assert coordinator.update_interval == timedelta(seconds=60)
+    assert coordinator.update_interval == timedelta(seconds=300)
+    assert coordinator.rate_limited is False
 
 
 async def test_retry_after_is_respected(hass, fake_client):
@@ -138,6 +139,31 @@ async def test_token_rotation_saved_without_reload(hass, fake_client):
 
 async def test_options_change_reloads_with_new_interval(hass, fake_client):
     entry = await setup(hass, WITH_TOKENS)
-    hass.config_entries.async_update_entry(entry, options={"poll_interval": 300, "element_kw": 3.6})
+    hass.config_entries.async_update_entry(entry, options={"poll_interval": 600, "element_kw": 3.6})
     await hass.async_block_till_done()
-    assert hass.data[DOMAIN][entry.entry_id].update_interval == timedelta(seconds=300)
+    assert hass.data[DOMAIN][entry.entry_id].update_interval == timedelta(seconds=600)
+
+
+async def test_daily_quota_backs_off_to_hourly_and_flags(hass, fake_client):
+    entry = await setup(hass, WITH_TOKENS)
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+
+    def exhausted(c):
+        raise api.ThermowattRateLimitError("quota", daily=True)
+
+    fake_client.behaviour["status"] = exhausted
+    with pytest.raises(UpdateFailed):
+        await coordinator._async_update_data()
+    assert coordinator.update_interval == timedelta(seconds=3600)
+    assert coordinator.rate_limited is True
+
+    fake_client.behaviour.pop("status")
+    await coordinator._async_update_data()
+    assert coordinator.rate_limited is False
+    assert coordinator.update_interval == timedelta(seconds=300)
+
+
+async def test_saved_interval_below_minimum_is_raised(hass, fake_client, caplog):
+    entry = await setup(hass, WITH_TOKENS, options={"poll_interval": 60})
+    assert hass.data[DOMAIN][entry.entry_id].update_interval == timedelta(seconds=240)
+    assert "below the 240 s minimum" in caplog.text

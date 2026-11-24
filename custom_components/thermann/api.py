@@ -10,8 +10,10 @@ Rate-limit safety rules this client follows:
   explicitly (setup / config flow / reauth). A 401 during normal use triggers
   at most one token refresh; if that fails, ThermowattAuthError is raised and
   the caller must stop polling.
-- HTTP 429 raises ThermowattRateLimitError (with Retry-After when given) so
-  the caller can back off.
+- Quota exhaustion raises ThermowattRateLimitError so the caller can back
+  off. The API reports it either as HTTP 429 or, more often, as HTTP 200 with
+  {"success": false, "error": "Daily request limit exceeded"}, so every 200
+  body is checked too. Any other `success: false` body is a failure.
 """
 from __future__ import annotations
 
@@ -38,11 +40,33 @@ class ThermowattAuthError(ThermowattApiError):
 
 
 class ThermowattRateLimitError(ThermowattApiError):
-    """HTTP 429 from the backend."""
+    """HTTP 429, or a 200 body saying the daily request limit is exceeded."""
 
-    def __init__(self, message: str, retry_after: float | None = None) -> None:
+    def __init__(self, message: str, retry_after: float | None = None, daily: bool = False) -> None:
         super().__init__(message)
         self.retry_after = retry_after
+        # True for the "Daily request limit exceeded" quota (reset time unknown).
+        self.daily = daily
+
+
+def _body_error(resp: requests.Response) -> str | None:
+    """The error a 200 response carries in its body, or None if it's a success.
+
+    Some command endpoints reply with an empty or non-JSON body; that is fine.
+    """
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    if body.get("success") is False or body.get("error"):
+        return str(body.get("error") or "unsuccessful response")
+    return None
+
+
+def _is_quota_error(error: str) -> bool:
+    return "limit exceeded" in error.lower()
 
 
 def _retry_after(resp: requests.Response) -> float | None:
@@ -134,6 +158,10 @@ class ThermowattClient:
 
             if resp.status_code == 429:
                 raise ThermowattRateLimitError("Login rate limited (HTTP 429)", _retry_after(resp))
+            if resp.status_code == 200 and (error := _body_error(resp)):
+                if _is_quota_error(error):
+                    raise ThermowattRateLimitError(f"Login refused: {error}", daily=True)
+                raise ThermowattAuthError(f"Login refused: {error}")
             if resp.status_code in (400, 401, 403):
                 raise ThermowattAuthError(
                     f"Login rejected with HTTP {resp.status_code}. Check email/password, or "
@@ -155,6 +183,11 @@ class ThermowattClient:
         resp = self._send("POST", f"{BASE_URL}/refresh", self._base_headers(api_key=True), json=payload)
         if resp.status_code == 429:
             raise ThermowattRateLimitError("Token refresh rate limited (HTTP 429)", _retry_after(resp))
+        if resp.status_code == 200 and (error := _body_error(resp)):
+            if _is_quota_error(error):
+                raise ThermowattRateLimitError(f"Token refresh refused: {error}", daily=True)
+            _LOGGER.debug("Token refresh refused: %s", error)
+            return False
         if resp.status_code != 200:
             _LOGGER.debug("Token refresh failed: HTTP %s", resp.status_code)
             return False
@@ -190,6 +223,10 @@ class ThermowattClient:
             raise ThermowattRateLimitError(f"{method} {endpoint} rate limited (HTTP 429)", _retry_after(resp))
         if resp.status_code != 200:
             raise ThermowattApiError(f"{method} {endpoint} failed: HTTP {resp.status_code}")
+        if error := _body_error(resp):
+            if _is_quota_error(error):
+                raise ThermowattRateLimitError(f"{method} {endpoint} refused: {error}", daily=True)
+            raise ThermowattApiError(f"{method} {endpoint} refused: {error}")
         return resp
 
     @staticmethod
@@ -206,7 +243,10 @@ class ThermowattClient:
 
     def get_status(self, serial: str) -> dict[str, Any]:
         result = self._result(self._request("GET", "/status", serial=serial))
-        return result if isinstance(result, dict) else {}
+        # An empty or partial result is not a reading; never show it as one.
+        if not isinstance(result, dict) or "T_Avg" not in result:
+            raise ThermowattApiError(f"/status for {serial} returned no readings")
+        return result
 
     def set_temperature(self, serial: str, temp_c: int) -> None:
         self._request("POST", "/manual", serial=serial, json={"T_SetPoint": temp_c})

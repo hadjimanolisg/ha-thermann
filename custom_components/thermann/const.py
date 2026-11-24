@@ -10,14 +10,20 @@ DEFAULT_APP_VERSION = "3.14"
 API_KEY = "YVjArWssxKH631jv1dnnWOTr6gijsSAGz7rQJ4hJoUNRffxYvbQaMbePBEZalena"
 BASE_URL = "https://myapp-connectivity.com/api/v1"
 
-# The app polls every 20 s, but only while it is open on screen. Home Assistant
-# polls 24/7, so use a much gentler default. Configurable in the options flow.
+# The vendor's daily request quota is undocumented. Other projects measured a
+# "Daily request limit exceeded" rejection after ~469 requests in a UTC day,
+# and two rejections in three days at 60 s polling (~1,500/day). The app
+# probably shares the same quota. 300 s is ~290 polls/day plus token
+# refreshes; the 240 s minimum keeps even worst-case volume under ~460/day.
+# Configurable in the options flow; saved values below the minimum are raised.
 CONF_POLL_INTERVAL = "poll_interval"
-DEFAULT_POLL_INTERVAL = 60  # seconds
-MIN_POLL_INTERVAL = 30
+DEFAULT_POLL_INTERVAL = 300  # seconds
+MIN_POLL_INTERVAL = 240
 MAX_POLL_INTERVAL = 3600
-# Upper bound for the backoff applied after errors / HTTP 429.
+# Backoff ceilings: transient errors / HTTP 429, and an exhausted daily quota
+# (reset time unknown; one probe an hour costs at most 24 requests a day).
 MAX_BACKOFF_INTERVAL = 900
+QUOTA_BACKOFF_INTERVAL = 3600
 
 # Keys under which tokens are persisted in the config entry, so a restart
 # refreshes the session instead of sending a new password login.
@@ -25,15 +31,16 @@ CONF_ACCESS_TOKEN = "access_token"
 CONF_REFRESH_TOKEN = "refresh_token"
 CONF_DEVICE_UUID = "device_uuid"
 
-# Cmd value (from the device status payload) -> HA operation mode string
-CMD_TO_MODE = {
-    9: "manual",
-    3: "eco",
-    17: "auto",
-    65: "holiday",
-    16: "off",
+# Cmd is a bit field: bit 0 = on, the other bits = mode family. The same
+# family with bit 0 cleared means the heater is off (e.g. 8 = turned off from
+# manual, 16 = from auto, 64 = from holiday; 8 and 16 seen on real heaters).
+CMD_ON_BIT = 1
+CMD_FAMILIES = {
+    2: "eco",  # 3 when on
+    8: "manual",  # 9 when on
+    16: "auto",  # 17 when on
+    64: "holiday",  # 65 when on
 }
-MODE_TO_CMD = {v: k for k, v in CMD_TO_MODE.items()}
 
 OPERATION_MODES = ["off", "eco", "manual", "auto", "holiday"]
 
