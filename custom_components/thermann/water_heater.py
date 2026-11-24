@@ -1,4 +1,4 @@
-"""Water heater platform for Thermowatt Smart."""
+"""Water heater platform for Thermann Smart."""
 from __future__ import annotations
 
 import logging

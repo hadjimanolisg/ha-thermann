@@ -1,4 +1,4 @@
-"""The Thermowatt Smart (Thermann Smart Electric) integration."""
+"""The Thermann Smart integration (Thermowatt-based smart electric water heaters)."""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -130,7 +130,7 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Thermowatt Smart from a config entry."""
+    """Set up Thermann Smart from a config entry."""
     client = ThermowattClient(
         email=entry.data[CONF_EMAIL],
         # Only present on entries created before v0.3.0; removed below once

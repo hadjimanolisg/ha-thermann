@@ -1,4 +1,4 @@
-# Thermowatt Smart for Home Assistant
+# Thermann Smart for Home Assistant
 
 A native Home Assistant **integration** (not an add-on) for Thermowatt-based
 smart electric water heaters, including the Australian **Thermann Smart
@@ -17,15 +17,15 @@ Based on earlier community work (see [Credits](#credits)), restructured as a pro
 
 ### Via HACS (custom repository)
 1. HACS -> Integrations -> ⋮ -> **Custom repositories**
-2. Add this repo's URL, category **Integration**
-3. Search for "Thermowatt Smart", install, restart Home Assistant
+2. Add `https://github.com/m4dm4xcy/ha-thermann`, category **Integration**
+3. Search for "Thermann Smart", install, restart Home Assistant
 
 ### Manual
 Copy `custom_components/thermann/` into your `config/custom_components/` directory and restart Home Assistant.
 
 ## Setup
 
-Settings -> Devices & Services -> Add Integration -> "Thermowatt Smart".
+Settings -> Devices & Services -> Add Integration -> "Thermann Smart".
 Enter your Thermann Control / MyThermowatt email and password.
 
 If setup fails with an auth error, expand "App version" in the form and set

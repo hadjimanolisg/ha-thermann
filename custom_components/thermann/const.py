@@ -1,4 +1,4 @@
-"""Constants for the Thermowatt Smart (Thermann Smart Electric) integration."""
+"""Constants for the Thermann Smart integration."""
 
 DOMAIN = "thermann"
 

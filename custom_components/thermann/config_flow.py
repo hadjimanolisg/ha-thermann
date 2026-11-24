@@ -1,4 +1,4 @@
-"""Config flow for Thermowatt Smart."""
+"""Config flow for Thermann Smart."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -62,7 +62,7 @@ def _error_key(err: Exception) -> str:
 
 
 class ThermowattSmartConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Thermowatt Smart."""
+    """Handle a config flow for Thermann Smart."""
 
     VERSION = 1
 
