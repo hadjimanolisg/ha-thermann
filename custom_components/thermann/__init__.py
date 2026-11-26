@@ -44,6 +44,19 @@ def async_save_tokens(hass: HomeAssistant, entry: ConfigEntry, client: Thermowat
     )
 
 
+# Entry data that changes without needing a reload: the session tokens
+# (compared separately), the saved heater list and the legacy password.
+_NO_RELOAD_KEYS = {CONF_ACCESS_TOKEN, CONF_REFRESH_TOKEN, CONF_DEVICES, CONF_PASSWORD}
+
+
+def entry_snapshot(entry: ConfigEntry) -> tuple[dict, dict]:
+    return dict(entry.options), {k: v for k, v in entry.data.items() if k not in _NO_RELOAD_KEYS}
+
+
+def stored_tokens(entry: ConfigEntry) -> tuple[str | None, str | None]:
+    return entry.data.get(CONF_ACCESS_TOKEN), entry.data.get(CONF_REFRESH_TOKEN)
+
+
 class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
     """Polls /status for every device on the account, with backoff on errors."""
 
@@ -75,9 +88,11 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         self.devices = {d["seriale"]: d.get("nome", "Boiler") for d in devices if d.get("seriale")}
         # /user-info "type", e.g. "TMEC"; shown as the model ID on the device page.
         self.device_types = {d["seriale"]: d.get("type") for d in devices if d.get("seriale")}
-        # Options at setup time; lets the update listener tell an options
-        # change (needs reload) from a token save (must NOT reload).
-        self.options_snapshot = dict(entry.options)
+        # What this setup was built from, so the update listener can tell a
+        # real change (options, account, a new session from a flow: reload)
+        # from this integration saving its own refreshed tokens (no reload).
+        self.entry_snapshot = entry_snapshot(entry)
+        self.persisted_tokens = stored_tokens(entry)
         # True from a rate-limit/quota rejection until the next good poll.
         # Commands are refused meanwhile, so they don't spend more quota.
         self.rate_limited = False
@@ -166,6 +181,10 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             raise UpdateFailed(f"{err}; backing off to {self.update_interval}") from err
         finally:
             # A refresh may have rotated the tokens even if the poll failed.
+            # Record them first: Home Assistant runs the update listener as
+            # soon as the entry is saved, and it must see this as our save.
+            if all(self.client.tokens):
+                self.persisted_tokens = tuple(self.client.tokens)
             async_save_tokens(self.hass, self.config_entry, self.client)
 
         if self.rate_limited:
@@ -267,9 +286,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload when options change. Token saves also fire this; ignore those."""
+    """Reload on a real change; ignore this integration's own token saves.
+
+    Real changes: options (Configure), the account or app version
+    (Reconfigure), or tokens the coordinator didn't write itself (a new
+    session from Reconfigure or re-authentication). The flows leave the
+    reload to this listener, as Home Assistant 2026.12 requires.
+    """
     coordinator: ThermowattCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if coordinator is not None and coordinator.options_snapshot == dict(entry.options):
+    if (
+        coordinator is not None
+        and coordinator.entry_snapshot == entry_snapshot(entry)
+        and coordinator.persisted_tokens == stored_tokens(entry)
+    ):
         return
     await hass.config_entries.async_reload(entry.entry_id)
 

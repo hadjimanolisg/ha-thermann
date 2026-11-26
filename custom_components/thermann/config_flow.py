@@ -82,6 +82,19 @@ class ThermowattSmartConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def _update_and_finish(self, entry: config_entries.ConfigEntry, reason: str, **changes: Any):
+        """Save the new account details and end the flow, reloading the entry.
+
+        A loaded entry has this integration's update listener, which reloads
+        it on such a change; Home Assistant 2026.12 requires leaving the
+        reload to it. An entry that never loaded has no listener, so Home
+        Assistant reloads it here.
+        """
+        if entry.update_listeners:
+            self.hass.config_entries.async_update_entry(entry, **changes)
+            return self.async_abort(reason=reason)
+        return self.async_update_reload_and_abort(entry, reason=reason, **changes)
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> "ThermannOptionsFlow":
@@ -146,8 +159,10 @@ class ThermowattSmartConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = _error_key(err)
             else:
                 data = {k: v for k, v in entry.data.items() if k != CONF_PASSWORD}
-                return self.async_update_reload_and_abort(
-                    entry, data={**data, CONF_APP_VERSION: app_version, **tokens}
+                return self._update_and_finish(
+                    entry,
+                    "reauth_successful",
+                    data={**data, CONF_APP_VERSION: app_version, **tokens},
                 )
 
         return self.async_show_form(
@@ -200,8 +215,9 @@ class ThermowattSmartConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "heater_not_shared"
                 else:
                     data = {k: v for k, v in entry.data.items() if k != CONF_PASSWORD}
-                    return self.async_update_reload_and_abort(
+                    return self._update_and_finish(
                         entry,
+                        "reconfigure_successful",
                         unique_id=unique_id,
                         title=email,
                         data={

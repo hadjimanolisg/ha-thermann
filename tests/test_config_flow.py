@@ -207,3 +207,36 @@ async def test_reconfigure_login_error_shows_form(hass, fake_client):
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "invalid_auth"}
     assert entry.data["access_token"] == "a"
+
+
+LISTENER_WARNING = "should use it for scheduling a reload"
+
+
+async def test_reconfigure_reloads_via_listener_without_warning(hass, fake_client, caplog):
+    """HA 2026.12 stops reloading for flows when the entry has an update listener."""
+    entry = await _loaded_entry(hass)
+    old = hass.data[DOMAIN][entry.entry_id]
+    result = await _start_reconfigure(hass, entry)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"email": BASE_DATA["email"], "password": "pw", "app_version": "3.14"}
+    )
+    await hass.async_block_till_done()
+    assert result["reason"] == "reconfigure_successful"
+    assert LISTENER_WARNING not in caplog.text
+    # Reloaded (new coordinator) so the new session is used straight away.
+    assert hass.data[DOMAIN][entry.entry_id] is not old
+    assert hass.data[DOMAIN][entry.entry_id].client.tokens == ("new-access", "new-refresh")
+
+
+async def test_reauth_of_loaded_entry_reloads_without_warning(hass, fake_client, caplog):
+    entry = await _loaded_entry(hass)
+    old = hass.data[DOMAIN][entry.entry_id]
+    result = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"password": "new", "app_version": "3.14"}
+    )
+    await hass.async_block_till_done()
+    assert result["reason"] == "reauth_successful"
+    assert LISTENER_WARNING not in caplog.text
+    assert hass.data[DOMAIN][entry.entry_id] is not old
+    assert hass.data[DOMAIN][entry.entry_id].client.tokens == ("new-access", "new-refresh")
