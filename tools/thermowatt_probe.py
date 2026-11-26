@@ -4,12 +4,18 @@ Makes exactly these requests, one second apart, and nothing else:
   1. POST /login        (one login)
   2. GET  /user-info
   3. GET  /status       (once per heater)
+  4. Optionally, per heater, two more reads (you are asked first):
+       GET /auto/raw-temperatures   the auto mode's weekly schedule
+       GET /waterheater-settings    comfort / boost settings
+     The app uses these addresses (found in MyThermowatt 3.16); this checks
+     what they return. A GET only reads: an address that doesn't accept it
+     just answers with an error.
 No commands are sent; nothing on the heater changes.
 
 Run it from a terminal (not inside Home Assistant):
     python3 -I tools/thermowatt_probe.py
 
-It spends 3+ requests of the account's daily quota (about 500, shared with
+It spends 3+ requests (5 per heater with the extra reads) of the account's daily quota (about 500, shared with
 Home Assistant and the app), so run it only when you need to see the raw API,
 for example after a firmware or app update. It stops at the first rate-limit
 or quota reply and never retries.
@@ -76,6 +82,17 @@ def call(method, path, hdrs, body=None):
     return status, {k: v for k, v in rh.items() if k.lower() not in DROP_HEADERS}, payload
 
 
+# Read-only addresses the app uses (MyThermowatt 3.16), checked with GET only.
+# (/stats is left out: without the app's "mode" parameter, whose values are
+# unknown, it only answers "Wrong mode".)
+EXTRA_READS = ["/auto/raw-temperatures", "/waterheater-settings"]
+
+
+def rate_limited(status, body):
+    error = body.get("error") if isinstance(body, dict) else None
+    return status == 429 or bool(error and "limit exceeded" in str(error).lower())
+
+
 def redact(obj, secrets, counters):
     if isinstance(obj, dict):
         out = {}
@@ -98,7 +115,9 @@ def main():
     print(__doc__.split("\n\n")[1])
     email = input("Thermowatt email: ").strip()
     password = getpass.getpass("Thermowatt password (hidden): ")
-    app_version = input("App version [3.14]: ").strip() or "3.14"
+    app_version = input("App version [3.16]: ").strip() or "3.16"
+    extra = input("Also read the schedule and settings (2 more requests per heater)? [y/N]: ")
+    extra = extra.strip().lower() == "y"
     if input("Send these requests now? [y/N]: ").strip().lower() != "y":
         sys.exit("Cancelled, nothing sent.")
 
@@ -133,11 +152,19 @@ def main():
             if not serial:
                 continue
             secrets[serial] = f"<serial {i}>"
-            status, rh, st = call("GET", "/status", headers(app_version, token, serial=serial))
-            report["calls"].append({"call": f"GET /status (heater {i})", "status": status, "headers": rh, "body": st})
-            error = st.get("error") if isinstance(st, dict) else None
-            if status == 429 or (error and "limit exceeded" in str(error).lower()):
-                print("Rate limited or daily quota reached; stopping.")
+            paths = ["/status"] + (EXTRA_READS if extra else [])
+            stop = False
+            for path in paths:
+                status, rh, body = call("GET", path, headers(app_version, token, serial=serial))
+                report["calls"].append(
+                    {"call": f"GET {path} (heater {i})", "status": status, "headers": rh, "body": body}
+                )
+                print(f"GET {path} (heater {i}): HTTP {status}")
+                if rate_limited(status, body):
+                    print("Rate limited or daily quota reached; stopping.")
+                    stop = True
+                    break
+            if stop:
                 break
 
     counters = {}

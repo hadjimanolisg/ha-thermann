@@ -121,7 +121,7 @@ pytest
 
 The tests run the integration inside a real Home Assistant core with the cloud API mocked. CI runs them on the oldest supported Home Assistant (2024.11), a recent one and the newest the test harness supports.
 
-To see what the real API returns for your account (for example after a firmware or app update), run the read-only probe from a terminal. It asks for your credentials at a hidden prompt, sends one login, one `/user-info` and one `/status` per heater, and writes a redacted `tools/thermowatt_probe.json` (git-ignored). It uses part of the daily quota, so run it only when needed:
+To see what the real API returns for your account (for example after a firmware or app update), run the read-only probe from a terminal. It asks for your credentials at a hidden prompt, sends one login, one `/user-info` and one `/status` per heater (and, if you say yes, two more reads per heater: the auto schedule and the heater settings), and writes a redacted `tools/thermowatt_probe.json` (git-ignored). It uses part of the daily quota, so run it only when needed:
 
 ```bash
 python3 -I tools/thermowatt_probe.py
