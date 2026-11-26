@@ -23,6 +23,9 @@ HIGH_AMBIENT_PAUSE_BIT = 0x02
 # WaterHeaterSts bit 0x08 was inferred by another project (firmware
 # 07.00.09.06) to be set during an anti-legionella (sanitation) cycle.
 ANTI_LEGIONELLA_BIT = 0x08
+# WaterHeaterSts bit 0x10 is what the app itself checks to show boost as
+# running (decoded from MyThermowatt 3.16's code).
+BOOST_BIT = 0x10
 
 
 async def async_setup_entry(
@@ -36,6 +39,7 @@ async def async_setup_entry(
             ThermannFaultBinarySensor(coordinator, serial),
             ThermannHighAmbientPauseBinarySensor(coordinator, serial),
             ThermannAntiLegionellaBinarySensor(coordinator, serial),
+            ThermannBoostBinarySensor(coordinator, serial),
         ]
     async_add_entities(entities)
 
@@ -125,3 +129,18 @@ class ThermannAntiLegionellaBinarySensor(ThermannEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         sts = as_int(self.status.get("WaterHeaterSts"))
         return bool(sts & ANTI_LEGIONELLA_BIT) if sts is not None else None
+
+
+class ThermannBoostBinarySensor(ThermannEntity, BinarySensorEntity):
+    """On while boost is running (WaterHeaterSts bit 0x10, as the app reads it)."""
+
+    _attr_translation_key = "boost"
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+
+    def __init__(self, coordinator: ThermowattCoordinator, serial: str) -> None:
+        super().__init__(coordinator, serial, "boost")
+
+    @property
+    def is_on(self) -> bool | None:
+        sts = as_int(self.status.get("WaterHeaterSts"))
+        return bool(sts & BOOST_BIT) if sts is not None else None

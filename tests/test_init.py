@@ -32,14 +32,15 @@ def reauth_started(hass: HomeAssistant) -> bool:
 async def test_stored_tokens_mean_no_login(hass, fake_client):
     entry = await setup(hass, WITH_TOKENS)
     assert entry.state is ConfigEntryState.LOADED
-    assert fake_client.calls == ["list", "status"]
+    # Device list, first poll, and the one-off settings read.
+    assert fake_client.calls == ["list", "status", "settings"]
     assert hass.states.get("water_heater.boiler").attributes["current_temperature"] == 55
 
 
 async def test_legacy_password_used_once_then_deleted(hass, fake_client):
     entry = await setup(hass, {**BASE_DATA, "password": "secret"})
     assert entry.state is ConfigEntryState.LOADED
-    assert fake_client.calls == ["login", "list", "status"]
+    assert fake_client.calls == ["login", "list", "status", "settings"]
     assert "password" not in entry.data
     assert entry.data["access_token"] == "new-access"
     assert entry.data["device_uuid"] == "dev-uuid"

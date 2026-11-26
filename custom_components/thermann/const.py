@@ -3,7 +3,7 @@
 DOMAIN = "thermann"
 
 CONF_APP_VERSION = "app_version"
-DEFAULT_APP_VERSION = "3.14"
+DEFAULT_APP_VERSION = "3.16"  # MyThermowatt version as of 2026-11
 
 # Extracted from the MyThermowatt / Thermann Control app. Identifies requests
 # as coming from "the app" - not a user secret, shared across all app users.

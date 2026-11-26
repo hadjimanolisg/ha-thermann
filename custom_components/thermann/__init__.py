@@ -28,7 +28,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 RATE_LIMIT_ISSUE = "rate_limited"
-PLATFORMS = [Platform.WATER_HEATER, Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.WATER_HEATER, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER]
 
 
 @callback
@@ -93,6 +93,9 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         # from this integration saving its own refreshed tokens (no reload).
         self.entry_snapshot = entry_snapshot(entry)
         self.persisted_tokens = stored_tokens(entry)
+        # Per heater, /waterheater-settings as read once at setup (and updated
+        # after changes from Home Assistant): e.g. {"TComfort": 20}. Not polled.
+        self.settings: dict[str, dict] = {}
         # True from a rate-limit/quota rejection until the next good poll.
         # Commands are refused meanwhile, so they don't spend more quota.
         self.rate_limited = False
@@ -138,6 +141,21 @@ class ThermowattCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         self._back_off(err.retry_after, quota=err.daily)
         self._async_rate_limit_issue(err)
         self.async_set_update_error(UpdateFailed(f"{err}; first poll in {self.update_interval}"))
+
+    async def async_load_settings(self) -> None:
+        """Read each heater's settings once (1 request per heater); never fatal."""
+        for serial in self.devices:
+            try:
+                self.settings[serial] = await self.hass.async_add_executor_job(
+                    self.client.get_settings, serial
+                )
+            except ThermowattApiError as err:
+                # Includes rate limits: the next poll handles those. The
+                # comfort temperature just shows as unknown until a restart.
+                _LOGGER.debug("Could not read settings for a heater: %s", err)
+                break
+        # A token refreshed meanwhile is saved by the next poll, which records
+        # it first so the update listener doesn't reload.
 
     def _poll_all(self) -> dict[str, dict]:
         # One /status call per device. /user-info is account-level and only
@@ -274,6 +292,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = ThermowattCoordinator(hass, entry, client, devices)
     if rate_limited is None:
         await coordinator.async_config_entry_first_refresh()
+        await coordinator.async_load_settings()
     else:
         coordinator.async_start_rate_limited(rate_limited)
 

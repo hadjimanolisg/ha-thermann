@@ -247,3 +247,46 @@ def test_failed_transport_still_counted():
     with pytest.raises(api.ThermowattApiError):
         c.get_status("S")
     assert c.request_counts()["total"] == 1
+
+
+WEEKDAY = "20" * 6 + "45" + "20" * 5 + "45" * 6 + "20" * 6
+SCHEDULE = {"Time_prg": "0", **{f"DayPrg_{d}": WEEKDAY for d in range(7)}}
+
+
+def test_scheduled_temperature_reads_then_posts_the_whole_schedule():
+    c = client([resp(200, {"success": True, "result": SCHEDULE}), resp(200, {"success": True})])
+    sent = c.set_scheduled_temperature("S", 50)
+    calls = c.session.request.call_args_list
+    assert [(call.args[0], call.args[1].split("/api/v1")[1]) for call in calls] == [
+        ("GET", "/auto/raw-temperatures"), ("POST", "/auto")]
+    assert calls[1].kwargs["json"] == sent
+    assert sent["DayPrg_0"] == WEEKDAY.replace("45", "50")
+    assert calls[1].kwargs["headers"]["seriale"] == "S"
+    counts = c.request_counts()
+    assert (counts["settings"], counts["command"]) == (1, 1)
+
+
+def test_bad_schedule_is_never_posted():
+    c = client([resp(200, {"success": True, "result": {**SCHEDULE, "DayPrg_2": "oops"}})])
+    with pytest.raises(api.ThermowattApiError, match="format"):
+        c.set_scheduled_temperature("S", 50)
+    assert endpoints(c) == ["raw-temperatures"]
+
+
+def test_invalid_temperature_is_refused_before_posting():
+    from custom_components.thermann.schedule import ScheduleError
+
+    c = client([resp(200, {"success": True, "result": SCHEDULE})])
+    with pytest.raises(ScheduleError):
+        c.set_scheduled_temperature("S", 20)
+    assert endpoints(c) == ["raw-temperatures"]
+
+
+def test_comfort_and_settings_calls():
+    c = client([resp(200, {"success": True, "result": {"TComfort": 20}}), resp(200, {"success": True})])
+    assert c.get_settings("S") == {"TComfort": 20}
+    c.set_comfort_temperature("S", 22)
+    calls = c.session.request.call_args_list
+    assert calls[0].args[0] == "GET" and calls[0].args[1].endswith("/waterheater-settings")
+    assert calls[1].args[0] == "POST" and calls[1].args[1].endswith("/tcomfort")
+    assert calls[1].kwargs["json"] == {"tcomfort": 22}

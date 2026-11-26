@@ -113,6 +113,17 @@
       },
       "anti_legionella": {
         "name": "Anti-legionella cycle"
+      },
+      "boost": {
+        "name": "Boost"
+      }
+    },
+    "number": {
+      "scheduled_temperature": {
+        "name": "Scheduled temperature"
+      },
+      "comfort_temperature": {
+        "name": "Comfort temperature"
       }
     }
   },

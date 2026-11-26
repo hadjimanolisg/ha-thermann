@@ -56,7 +56,7 @@ One device per heater on your account, with:
 - Current and target temperature, with the allowed range read from the heater itself (20-70 °C on a Thermann Smart Electric)
 - Operation modes: Off, Eco, Manual, Auto, Holiday (`off`, `eco`, `manual`, `auto`, `holiday` in automations). "Off" is recognised whichever mode the heater was turned off from.
 - Target temperature shows what the heater is aiming for **right now**: your setpoint in manual; in auto, the schedule temperature during scheduled hours and the "T comfort auto" temperature outside them
-- The temperature control is only offered in **manual** mode. The Thermowatt API sets the temperature through manual mode, so changing it in any other mode would also switch the heater to manual and off its schedule. To change it, switch to manual first.
+- The temperature control is only offered in **manual** mode. The Thermowatt API sets the temperature through manual mode, so changing it in any other mode would also switch the heater to manual and off its schedule. To change it, switch to manual first. In auto mode, use the two auto temperatures below instead.
 - Mode and temperature changes show in Home Assistant as soon as the heater's cloud accepts them; the next poll then shows what the heater actually reports. In eco, auto and holiday the target temperature updates at that poll, because it comes from the heater.
 - Attributes: `desired_temperature` (current target), `manual_setpoint`, `schedule_comfort_temperature` (auto, during scheduled hours), `boost_temperature`, `time_remaining`, `frost_protection_temperature`, `demand_response_status`
 
@@ -68,15 +68,20 @@ One device per heater on your account, with:
 - `API requests (24 h)` (diagnostic) - requests this integration sent to the Thermowatt cloud in the last 24 hours, split into status polls, token renewals, logins, commands and device-list fetches. Counted locally (costs nothing); it starts again when Home Assistant restarts (`counting_since`, `full_day`). Compare it with the app's daily-limit warnings.
 - `Time remaining` in minutes (diagnostic) - appears to be the heater's estimate of time left to reach the target while heating; 0 when idle
 
+**Auto mode temperatures** (number controls)
+- `Scheduled temperature` - what the heater keeps during the schedule's hours (45 °C in the app's default). Changing it works like the app's dial in auto: the schedule is read, its highest temperature replaced, and the schedule sent back (2 requests). Only in auto mode, because sending the schedule also selects auto. The hours themselves never change; edit those in the app.
+- `Comfort temperature` - what the heater keeps outside those hours (the app's "T comfort auto", e.g. 20 °C). Must stay below the scheduled temperature. 1 request per change; its current value is read once when Home Assistant starts (1 request per heater), so a change made in the app shows here after the next restart.
+
 **Binary sensors**
 - `Heating` - the element is on right now; raw device flags in the `status_flags` attribute
 - `Fault` (diagnostic) - on when the heater reports an error code; codes in the attributes
 - `Anti-legionella cycle` (diagnostic) - on while the heater runs its sanitation cycle (inferred from another project's observations)
 - `High ambient pause` (diagnostic) - heating is paused because it's too hot around the heater; it resumes by itself, so this isn't counted as a fault
+- `Boost` - boost is running (the same status bit the app uses)
 
 On Home Assistant 2026.3 and later the integration shows the Thermowatt logo, with a light version for dark themes. The device page also shows the heater and Wi-Fi module firmware versions, and offers **Download diagnostics** for bug reports (email, tokens, serial numbers and names are removed).
 
-Everything comes from one `/status` request per heater per poll; extra entities don't add requests.
+Everything comes from one `/status` request per heater per poll; extra entities don't add requests. The only exceptions are the one-off settings read at startup and the requests a change itself needs.
 
 ## Polling and rate limits
 
