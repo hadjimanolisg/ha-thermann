@@ -16,6 +16,7 @@ from .const import (
     CONF_ACCESS_TOKEN,
     CONF_APP_VERSION,
     CONF_DEVICE_UUID,
+    CONF_DEVICES,
     CONF_ELEMENT_KW,
     CONF_POLL_INTERVAL,
     CONF_REFRESH_TOKEN,
@@ -37,14 +38,29 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 
 
 async def _login(
-    hass: HomeAssistant, email: str, password: str, app_version: str, device_uuid: str
+    hass: HomeAssistant,
+    email: str,
+    password: str,
+    app_version: str,
+    device_uuid: str,
+    serials: list[str] | None = None,
 ) -> dict[str, str]:
-    """Do one real login. Returns the token fields to store. Raises on failure."""
+    """Do one real login. Returns the token fields to store. Raises on failure.
+
+    With `serials` (a list), also fetches the account's heaters (one
+    /user-info request) and fills the list with their serial numbers.
+    """
     client = ThermowattClient(
         email=email, password=password, device_uuid=device_uuid, app_version=app_version
     )
+
+    def _run() -> None:
+        client.login()
+        if serials is not None:
+            serials.extend(d["seriale"] for d in client.list_devices() if d.get("seriale"))
+
     try:
-        await hass.async_add_executor_job(client.login)
+        await hass.async_add_executor_job(_run)
     finally:
         await hass.async_add_executor_job(client.session.close)
     access, refresh = client.tokens
@@ -145,6 +161,74 @@ class ThermowattSmartConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             description_placeholders={"email": entry.data[CONF_EMAIL]},
+            errors=errors,
+        )
+
+
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None):
+        """Sign in with another account (or a new password) in place.
+
+        Keeps the entry, so entities, names, areas, options and the energy
+        total stay. The new account must have at least one of the heaters
+        already set up: entities are tied to the heater's serial number.
+        """
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            email = user_input[CONF_EMAIL].strip()
+            unique_id = email.lower()
+            if unique_id != entry.unique_id:
+                await self.async_set_unique_id(unique_id)
+                # Another entry already uses this account.
+                self._abort_if_unique_id_configured()
+            serials: list[str] = []
+            try:
+                tokens = await _login(
+                    self.hass,
+                    email,
+                    user_input[CONF_PASSWORD],
+                    user_input[CONF_APP_VERSION],
+                    # Same device id: this is still the same Home Assistant.
+                    entry.data[CONF_DEVICE_UUID],
+                    serials,
+                )
+            except Exception as err:  # noqa: BLE001
+                errors["base"] = _error_key(err)
+            else:
+                current = {d.get("seriale") for d in entry.data.get(CONF_DEVICES, [])}
+                if current and not current & set(serials):
+                    errors["base"] = "heater_not_shared"
+                else:
+                    data = {k: v for k, v in entry.data.items() if k != CONF_PASSWORD}
+                    return self.async_update_reload_and_abort(
+                        entry,
+                        unique_id=unique_id,
+                        title=email,
+                        data={
+                            **data,
+                            CONF_EMAIL: email,
+                            CONF_APP_VERSION: user_input[CONF_APP_VERSION],
+                            **tokens,
+                        },
+                    )
+
+        defaults = user_input or {}
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_EMAIL, default=defaults.get(CONF_EMAIL, entry.data[CONF_EMAIL])
+                    ): str,
+                    vol.Required(CONF_PASSWORD): str,
+                    vol.Optional(
+                        CONF_APP_VERSION,
+                        default=defaults.get(
+                            CONF_APP_VERSION, entry.data.get(CONF_APP_VERSION, DEFAULT_APP_VERSION)
+                        ),
+                    ): str,
+                }
+            ),
             errors=errors,
         )
 

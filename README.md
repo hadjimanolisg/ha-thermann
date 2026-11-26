@@ -32,6 +32,22 @@ If setup fails with an auth error, expand "App version" in the form and set
 it to match your installed app's current version number (Thermowatt's
 backend has been observed to reject requests claiming an old app version).
 
+### A separate account for Home Assistant (recommended)
+
+The app can share a heater with another account. Giving Home Assistant its
+own account keeps a lockout or rate limit caused by Home Assistant away from
+the account you use in the app, and probably gives Home Assistant its own
+daily request quota.
+
+1. Create a second account in the app and share the heater with it. Sign in
+   with it once and check it can change the mode and temperature.
+2. In Home Assistant: Settings -> Devices & Services -> Thermann Smart ->
+   the three dots -> **Reconfigure**, then sign in with the new account.
+
+Reconfigure keeps everything: entities, names, areas, settings and the
+energy total. It refuses an account that doesn't have the heater. You can
+also use it to enter a new password for the same account.
+
 ## What you get
 
 One device per heater on your account, with:

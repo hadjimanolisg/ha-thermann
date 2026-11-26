@@ -99,3 +99,111 @@ async def test_options_form_starts_at_minimum_for_old_low_value(hass, fake_clien
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"element_kw": 3.0})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["poll_interval"] == 240
+
+
+async def _loaded_entry(hass, **options):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={**BASE_DATA, "access_token": "a", "refresh_token": "r"},
+        options=options,
+        unique_id=BASE_DATA["email"],
+        title=BASE_DATA["email"],
+    )
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
+async def _start_reconfigure(hass, entry):
+    return await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_RECONFIGURE, "entry_id": entry.entry_id}
+    )
+
+
+async def test_reconfigure_switches_account_and_keeps_everything(hass, fake_client):
+    from homeassistant.helpers import entity_registry as er
+
+    entry = await _loaded_entry(hass, poll_interval=600, element_kw=3.0)
+    unique_ids = {e.unique_id for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)}
+    logins = fake_client.calls.count("login")
+
+    result = await _start_reconfigure(hass, entry)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"email": "ha@example.com", "password": "pw", "app_version": "3.14"}
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.unique_id == "ha@example.com"
+    assert entry.title == "ha@example.com"
+    assert entry.data["email"] == "ha@example.com"
+    assert entry.data["access_token"] == "new-access"
+    assert entry.data["device_uuid"] == BASE_DATA["device_uuid"]
+    assert "password" not in entry.data
+    assert dict(entry.options) == {"poll_interval": 600, "element_kw": 3.0}
+    assert fake_client.calls.count("login") == logins + 1
+    # Same entities after the reload: history, names and automations keep working.
+    assert entry.state is config_entries.ConfigEntryState.LOADED
+    after = {e.unique_id for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)}
+    assert after == unique_ids
+    assert hass.states.get("water_heater.boiler") is not None
+
+
+async def test_reconfigure_same_account_new_password(hass, fake_client):
+    entry = await _loaded_entry(hass)
+    result = await _start_reconfigure(hass, entry)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"email": BASE_DATA["email"], "password": "pw", "app_version": "3.15"}
+    )
+    await hass.async_block_till_done()
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.unique_id == BASE_DATA["email"]
+    assert entry.data["app_version"] == "3.15"
+
+
+async def test_reconfigure_refuses_account_without_the_heater(hass, fake_client):
+    entry = await _loaded_entry(hass)
+    fake_client.behaviour["list"] = lambda c: [{"seriale": "OTHER", "nome": "Neighbour"}]
+    result = await _start_reconfigure(hass, entry)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"email": "ha@example.com", "password": "pw", "app_version": "3.14"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "heater_not_shared"}
+    assert entry.unique_id == BASE_DATA["email"]
+    assert entry.data["access_token"] == "a"
+
+
+async def test_reconfigure_refuses_account_used_by_another_entry(hass, fake_client):
+    entry = await _loaded_entry(hass)
+    MockConfigEntry(domain=DOMAIN, data=dict(BASE_DATA), unique_id="ha@example.com").add_to_hass(hass)
+    logins = fake_client.calls.count("login")
+    result = await _start_reconfigure(hass, entry)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"email": "HA@example.com", "password": "pw", "app_version": "3.14"}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    # Refused before any login.
+    assert fake_client.calls.count("login") == logins
+    assert entry.unique_id == BASE_DATA["email"]
+
+
+async def test_reconfigure_login_error_shows_form(hass, fake_client):
+    entry = await _loaded_entry(hass)
+
+    def fail(c):
+        raise api.ThermowattAuthError("bad")
+
+    fake_client.behaviour["login"] = fail
+    result = await _start_reconfigure(hass, entry)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"email": "ha@example.com", "password": "bad", "app_version": "3.14"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_auth"}
+    assert entry.data["access_token"] == "a"
