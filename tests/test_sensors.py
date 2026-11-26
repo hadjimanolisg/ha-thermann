@@ -126,9 +126,8 @@ async def test_api_requests_sensor_stays_available(hass, loaded, fake_client):
     from custom_components.thermann import api
 
     state = hass.states.get("sensor.boiler_api_requests_24_h")
-    assert int(state.state) == 3  # setup: device list, first status poll, settings read
+    assert int(state.state) == 2  # setup: device list + first status poll
     assert state.attributes["device_list"] == 1
-    assert state.attributes["settings"] == 1
     assert state.attributes["status"] == 1
     assert state.attributes["full_day"] is True  # fake client counting since epoch
 
@@ -140,4 +139,4 @@ async def test_api_requests_sensor_stays_available(hass, loaded, fake_client):
     await hass.async_block_till_done()
     state = hass.states.get("sensor.boiler_api_requests_24_h")
     assert state.state != "unavailable"
-    assert int(state.state) == 4  # the failed poll counts too
+    assert int(state.state) == 3

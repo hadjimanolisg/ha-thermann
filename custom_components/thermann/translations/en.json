@@ -117,11 +117,6 @@
       "boost": {
         "name": "Boost"
       }
-    },
-    "number": {
-      "comfort_temperature": {
-        "name": "Comfort temperature"
-      }
     }
   },
   "issues": {

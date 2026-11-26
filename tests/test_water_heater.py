@@ -84,7 +84,7 @@ async def test_out_of_range_setpoint_rejected_without_api_call(hass, loaded, fak
 async def test_extra_attributes(hass, loaded):
     attrs = hass.states.get(ENTITY).attributes
     assert attrs["desired_temperature"] == 60
-    assert attrs["schedule_comfort_temperature"] == 45
+    assert attrs["scheduled_temperature"] == 45
     assert attrs["manual_setpoint"] == 60
     assert attrs["boost_temperature"] == 70
     assert attrs["frost_protection_temperature"] == 16
@@ -108,25 +108,26 @@ async def test_manual_mode_offers_temperature_control(hass, loaded):
     assert features == F.TARGET_TEMPERATURE | F.OPERATION_MODE
 
 
-async def test_auto_mode_target_is_the_scheduled_temperature(hass, loaded, fake_client):
-    """Auto outside scheduled hours: aims for 20 now, but the control shows Tmsch."""
+async def test_auto_mode_follows_schedule_and_hides_control(hass, loaded, fake_client):
+    """Auto outside scheduled hours: heater aims for T comfort auto (20)."""
     from homeassistant.components.water_heater import WaterHeaterEntityFeature as F
+    from homeassistant.exceptions import ServiceValidationError
 
-    fake_client.behaviour["status"] = lambda c: {
-        **STATUS, "Cmd": "17", "T_SetPoint": "47", "T_dsrd": "20", "Tmsch": "45"
-    }
+    fake_client.behaviour["status"] = lambda c: {**STATUS, "Cmd": "17", "T_SetPoint": "45", "T_dsrd": "20"}
     await hass.data[DOMAIN][loaded.entry_id].async_refresh()
     await hass.async_block_till_done()
 
     state = hass.states.get(ENTITY)
     assert state.state == "auto"
-    assert state.attributes["temperature"] == 45
-    assert state.attributes["desired_temperature"] == 20
-    assert state.attributes["manual_setpoint"] == 47
-    assert state.attributes["comfort_temperature"] == 20
-    assert state.attributes["supported_features"] == F.TARGET_TEMPERATURE | F.OPERATION_MODE
-    # Must stay above the comfort temperature (20).
-    assert state.attributes["min_temp"] == 21
+    assert state.attributes["temperature"] == 20
+    assert state.attributes["manual_setpoint"] == 45
+    assert state.attributes["supported_features"] == F.OPERATION_MODE
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            WH_DOMAIN, "set_temperature", {"entity_id": ENTITY, "temperature": 50}, blocking=True
+        )
+    assert "set_temperature" not in fake_client.calls
 
 
 async def test_target_falls_back_to_setpoint(hass, loaded, fake_client):
@@ -196,8 +197,7 @@ async def test_set_temperature_shows_at_once_without_a_poll(hass, loaded, fake_c
 
 @pytest.mark.parametrize(
     ("mode", "temperature"),
-    # In auto the control shows the scheduled temperature (Tmsch 45).
-    [("eco", 60), ("auto", 45), ("holiday", 60), ("off", 60)],
+    [("eco", 60), ("auto", 60), ("holiday", 60), ("off", 60)],
 )
 async def test_mode_change_shows_at_once(hass, loaded, fake_client, mode, temperature):
     polls = fake_client.calls.count("status")
@@ -274,120 +274,20 @@ async def test_every_mode_has_a_display_name(hass, loaded):
     assert hass.states.get(ENTITY).name == "Boiler"
 
 
-AUTO = {**STATUS, "Cmd": "17", "T_SetPoint": "47", "T_dsrd": "45", "Tmsch": "45"}
-
-
-async def _auto(hass, loaded, fake_client, **changes):
-    fake_client.behaviour["status"] = lambda c: {**AUTO, **changes}
-    await hass.data[DOMAIN][loaded.entry_id].async_refresh()
-    await hass.async_block_till_done()
-
-
-async def _set_temp(hass, temp):
-    await hass.services.async_call(
-        WH_DOMAIN, "set_temperature", {"entity_id": ENTITY, "temperature": temp}, blocking=True
-    )
-    await hass.async_block_till_done()
-
-
-async def test_auto_sets_scheduled_temperature_without_leaving_auto(hass, loaded, fake_client):
-    await _auto(hass, loaded, fake_client)
-    polls = fake_client.calls.count("status")
-    await _set_temp(hass, 55)
-    assert fake_client.sent == [("scheduled", 55)]
-    assert "set_temperature" not in fake_client.calls  # never /manual in auto
-    state = hass.states.get(ENTITY)
-    assert state.state == "auto"
-    assert state.attributes["temperature"] == 55
-    # Inside scheduled hours the current target follows.
-    assert state.attributes["desired_temperature"] == 55
-    assert fake_client.calls.count("status") == polls
-
-
-async def test_auto_outside_scheduled_hours_keeps_current_target(hass, loaded, fake_client):
-    await _auto(hass, loaded, fake_client, T_dsrd="20")
-    await _set_temp(hass, 55)
-    attrs = hass.states.get(ENTITY).attributes
-    assert attrs["temperature"] == 55
-    assert attrs["desired_temperature"] == 20
-
-
-async def test_auto_refuses_a_value_not_above_comfort(hass, loaded, fake_client):
-    from homeassistant.exceptions import ServiceValidationError
-
-    await _auto(hass, loaded, fake_client)
-    with pytest.raises(ServiceValidationError):
-        await _set_temp(hass, 20)
-    assert fake_client.sent == []
-
-
-async def test_schedule_problem_becomes_a_validation_error(hass, loaded, fake_client):
-    from homeassistant.exceptions import ServiceValidationError
-
-    from custom_components.thermann.schedule import ScheduleError
-
-    await _auto(hass, loaded, fake_client)
-
-    def refuse(c):
-        raise ScheduleError("The schedule has no scheduled hours to change")
-
-    fake_client.behaviour["set_scheduled_temperature"] = refuse
-    with pytest.raises(ServiceValidationError, match="no scheduled hours"):
-        await _set_temp(hass, 50)
-    assert hass.states.get(ENTITY).attributes["temperature"] == 45
-
-
-@pytest.mark.parametrize("cmd", ["3", "65", "16"])
-async def test_no_temperature_control_in_other_modes(hass, loaded, fake_client, cmd):
-    from homeassistant.components.water_heater import WaterHeaterEntityFeature as F
-
-    await _auto(hass, loaded, fake_client, Cmd=cmd)
-    assert hass.states.get(ENTITY).attributes["supported_features"] == F.OPERATION_MODE
-    # Newer HA refuses a hidden feature itself; older HA reaches our check.
-    with pytest.raises(HomeAssistantError):
-        await _set_temp(hass, 50)
-    assert fake_client.sent == [] and "set_temperature" not in fake_client.calls
-
-
-async def test_scheduled_temperature_refused_while_rate_limited(hass, loaded, fake_client):
-    await _auto(hass, loaded, fake_client)
-    hass.data[DOMAIN][loaded.entry_id].rate_limited = True
-    with pytest.raises(HomeAssistantError, match="rate limiting"):
-        await _set_temp(hass, 50)
-    assert fake_client.sent == []
-
-
-async def test_comfort_unknown_when_settings_read_failed(hass, fake_client):
-    def quota(c):
-        raise api.ThermowattRateLimitError("limit", daily=True)
-
-    fake_client.behaviour["settings"] = quota
-    fake_client.behaviour["status"] = lambda c: dict(AUTO)
-    entry = MockConfigEntry(domain=DOMAIN, data={**BASE_DATA, "access_token": "a", "refresh_token": "r"})
-    entry.add_to_hass(hass)
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    attrs = hass.states.get(ENTITY).attributes
-    assert "comfort_temperature" not in attrs
-    assert attrs["min_temp"] == 20
-
-
-async def test_old_scheduled_number_is_removed(hass, fake_client):
+async def test_old_numbers_are_removed(hass, fake_client):
     from homeassistant.helpers import entity_registry as er
 
     entry = MockConfigEntry(domain=DOMAIN, data={**BASE_DATA, "access_token": "a", "refresh_token": "r"})
     entry.add_to_hass(hass)
     registry = er.async_get(hass)
     for key in ("scheduled_temperature", "comfort_temperature"):
-        registry.async_get_or_create(
-            "number", DOMAIN, f"thermann_SN1_{key}", config_entry=entry
-        )
+        registry.async_get_or_create("number", DOMAIN, f"thermann_SN1_{key}", config_entry=entry)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    numbers = {e.unique_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)
-               if e.domain == "number"}
-    # The scheduled one is gone (it's the water heater's target now); comfort stays.
-    assert numbers == {"thermann_SN1_comfort_temperature"}
+    assert not [e for e in er.async_entries_for_config_entry(registry, entry.entry_id)
+                if e.domain == "number"]
+    # Setup still makes only the device list and status requests.
+    assert fake_client.calls == ["list", "status"]
 
 
 @pytest.mark.parametrize(("sts", "state"), [("32", "off"), ("48", "on"), ("49", "on"), ("1", "off")])

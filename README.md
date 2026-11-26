@@ -55,15 +55,10 @@ One device per heater on your account, with:
 **Water heater**
 - Current and target temperature, with the allowed range read from the heater itself (20-70 °C on a Thermann Smart Electric)
 - Operation modes: Off, Eco, Manual, Auto, Holiday (`off`, `eco`, `manual`, `auto`, `holiday` in automations). "Off" is recognised whichever mode the heater was turned off from.
-- The temperature control works in **manual** and **auto**:
-  - **Manual:** sets your setpoint.
-  - **Auto:** shows and sets the schedule's temperature for its scheduled hours (e.g. 45 °C), like the dial in the app. The schedule is read, that temperature replaced and the schedule saved (2 requests). The hours themselves and the mode never change; edit the hours in the app. It must stay above the comfort temperature (below).
-  - In eco, holiday and off there's no temperature to set (the API would switch the heater to manual), so the control is hidden.
+- Target temperature shows what the heater is aiming for **right now**: your setpoint in manual; in auto, the schedule temperature during scheduled hours and the "T comfort auto" temperature outside them
+- The temperature control is only offered in **manual** mode. The Thermowatt API sets the temperature through manual mode, so changing it in any other mode would also switch the heater to manual and off its schedule. To change it, switch to manual first. The auto schedule and its temperatures are changed in the app.
 - Mode and temperature changes show in Home Assistant as soon as the heater's cloud accepts them; the next poll then shows what the heater actually reports. In eco, auto and holiday the target temperature updates at that poll, because it comes from the heater.
-- Attributes: `desired_temperature` (what it's aiming for right now; in auto, the scheduled temperature during scheduled hours and the comfort temperature outside them), `manual_setpoint`, `schedule_comfort_temperature` (auto, during scheduled hours), `comfort_temperature` (auto, outside scheduled hours; see the number below), `boost_temperature`, `time_remaining`, `frost_protection_temperature`, `demand_response_status`
-
-**Comfort temperature** (number, auto mode only)
-- What the heater keeps outside the schedule's hours in auto (the app's "T comfort auto", e.g. 20 °C). Changed like the app's settings page does it: the setting is saved and the schedule's other hours updated (3 requests). Must stay below the scheduled temperature. Unavailable in other modes. Its value is read once when Home Assistant starts (1 request per heater), so a change made in the app shows here after the next restart.
+- Attributes: `desired_temperature` (current target), `manual_setpoint`, `scheduled_temperature` (auto, during scheduled hours; called `schedule_comfort_temperature` before 0.9.10), `boost_temperature`, `time_remaining`, `frost_protection_temperature`, `demand_response_status`
 
 **Sensors**
 - `Temperature` - current water temperature
@@ -82,7 +77,7 @@ One device per heater on your account, with:
 
 On Home Assistant 2026.3 and later the integration shows the Thermowatt logo, with a light version for dark themes. The device page also shows the heater and Wi-Fi module firmware versions, and offers **Download diagnostics** for bug reports (email, tokens, serial numbers and names are removed).
 
-Everything comes from one `/status` request per heater per poll; extra entities don't add requests. The only exceptions are a one-off settings read per heater when Home Assistant starts (for the comfort temperature) and the requests a change itself needs.
+Everything comes from one `/status` request per heater per poll; extra entities don't add requests.
 
 ## Polling and rate limits
 

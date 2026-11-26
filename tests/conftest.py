@@ -55,9 +55,8 @@ class FakeClient:
 
     def request_counts(self):
         kinds = {"status": "status", "list": "device_list", "login": "login",
-                 "set_temperature": "command", "set_mode": "command", "settings": "settings",
-                 "set_scheduled_temperature": "command", "set_comfort_temperature": "command"}
-        counts = dict.fromkeys(api.REQUEST_KINDS, 0)
+                 "set_temperature": "command", "set_mode": "command"}
+        counts = dict.fromkeys(("status", "token_renewal", "login", "command", "device_list"), 0)
         for call in FakeClient.calls:
             if call in kinds:
                 counts[kinds[call]] += 1
@@ -96,24 +95,12 @@ class FakeClient:
     def set_mode(self, serial, mode, setpoint=60):
         self._run("set_mode", None)
 
-    def get_settings(self, serial):
-        return self._run("settings", {"TBoost": None, "BoostDuration": None, "TComfort": 20})
-
-    def set_comfort_temperature(self, serial, temp):
-        FakeClient.sent.append(("comfort", temp))
-        return self._run("set_comfort_temperature", None)
-
-    def set_scheduled_temperature(self, serial, temp):
-        FakeClient.sent.append(("scheduled", temp))
-        return self._run("set_scheduled_temperature", None)
-
 
 @pytest.fixture
 def fake_client(monkeypatch):
     FakeClient.calls = []
     FakeClient.behaviour = {}
     FakeClient.instances = []
-    FakeClient.sent = []
     monkeypatch.setattr("custom_components.thermann.ThermowattClient", FakeClient)
     monkeypatch.setattr("custom_components.thermann.config_flow.ThermowattClient", FakeClient)
     return FakeClient

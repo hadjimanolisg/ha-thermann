@@ -33,7 +33,6 @@ from typing import Any
 
 import requests
 
-from .schedule import ScheduleError, hourly, with_comfort_temperature, with_scheduled_temperature
 from .const import API_KEY, BASE_URL
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,9 +40,7 @@ _LOGGER = logging.getLogger(__name__)
 _TIMEOUT = 15
 
 # Request kinds counted for the "API requests (24 h)" sensor.
-REQUEST_KINDS = ("status", "token_renewal", "login", "command", "device_list", "settings")
-# Read-only endpoints for the auto schedule and the heater's settings.
-_SETTINGS_READS = {"raw-temperatures", "waterheater-settings"}
+REQUEST_KINDS = ("status", "token_renewal", "login", "command", "device_list")
 _DAY = 86400
 
 
@@ -57,8 +54,6 @@ def _request_kind(method: str, url: str) -> str:
         return "login"
     if endpoint == "user-info":
         return "device_list"
-    if method == "GET" and endpoint in _SETTINGS_READS:
-        return "settings"
     return "command" if method == "POST" else "device_list"
 
 
@@ -352,58 +347,6 @@ class ThermowattClient:
         if not isinstance(result, dict) or "T_Avg" not in result:
             raise ThermowattApiError(f"/status for {serial} returned no readings")
         return result
-
-    def get_schedule(self, serial: str) -> dict[str, Any]:
-        """The auto mode's weekly schedule (GET /auto/raw-temperatures)."""
-        result = self._result(self._request("GET", "/auto/raw-temperatures", serial=serial))
-        if not isinstance(result, dict):
-            raise ThermowattApiError(f"Schedule for {serial} has an unexpected format")
-        try:
-            hourly(result)
-        except ScheduleError as err:
-            raise ThermowattApiError(f"Schedule for {serial}: {err}") from err
-        return result
-
-    def _post_schedule(self, serial: str, schedule: dict[str, Any]) -> None:
-        # The app's save. A bare POST /auto is only "switch to auto" and
-        # silently ignores a schedule sent with it.
-        self._request("POST", "/auto/raw-temperatures", serial=serial, json=schedule)
-
-    def set_scheduled_temperature(self, serial: str, temp_c: int) -> dict[str, Any]:
-        """Change the temperature of the auto mode's scheduled hours, as the app does.
-
-        Reads the schedule, replaces its highest temperature and posts the
-        whole schedule back: 2 requests. The mode is not changed. Raises
-        ScheduleError, before anything is sent, if the value can't be
-        applied. Returns the schedule that was sent.
-        """
-        new = with_scheduled_temperature(self.get_schedule(serial), temp_c)
-        self._post_schedule(serial, new)
-        return new
-
-    def get_settings(self, serial: str) -> dict[str, Any]:
-        """Comfort and boost settings (GET /waterheater-settings), e.g. TComfort.
-
-        Read once at setup; set_comfort_temperature keeps it current.
-        """
-        result = self._result(self._request("GET", "/waterheater-settings", serial=serial))
-        if not isinstance(result, dict):
-            raise ThermowattApiError(f"Settings for {serial} have an unexpected format")
-        return result
-
-
-    def set_comfort_temperature(self, serial: str, temp_c: int) -> dict[str, Any]:
-        """The auto mode's temperature outside scheduled hours ("T comfort auto").
-
-        As the app does: store the setting (POST /tcomfort), then put it in
-        the schedule's other hours, which is what the heater follows: 3
-        requests. The schedule is checked before the setting is sent, so a
-        value that can't be applied changes nothing. Returns the schedule sent.
-        """
-        new = with_comfort_temperature(self.get_schedule(serial), temp_c)
-        self._request("POST", "/tcomfort", serial=serial, json={"tcomfort": temp_c})
-        self._post_schedule(serial, new)
-        return new
 
     def set_temperature(self, serial: str, temp_c: int) -> None:
         self._request("POST", "/manual", serial=serial, json={"T_SetPoint": temp_c})
