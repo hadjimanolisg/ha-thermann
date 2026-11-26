@@ -16,6 +16,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ThermowattCoordinator
 from .api import ThermowattApiError
+from .schedule import ScheduleError
 from .const import CMD_FAMILIES, CMD_ON_BIT, DEFAULT_TEMP, DOMAIN, MAX_TEMP, MIN_TEMP, OPERATION_MODES
 from .entity import ThermannEntity, as_float, as_int, decode_mode
 
@@ -95,9 +96,22 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
         return UnitOfTemperature.CELSIUS
 
     @property
+    def _comfort_temperature(self) -> int | None:
+        """The auto schedule's temperature outside scheduled hours (read at setup)."""
+        return as_int(self.coordinator.settings.get(self._serial, {}).get("TComfort"))
+
+    @property
     def min_temp(self) -> float:
-        """The heater reports its own limits; fall back if it doesn't."""
-        return as_int(self.status.get("T_set_min")) or MIN_TEMP
+        """The heater reports its own limits; fall back if it doesn't.
+
+        In auto the control sets the scheduled temperature, which has to stay
+        above the comfort temperature.
+        """
+        low = as_int(self.status.get("T_set_min")) or MIN_TEMP
+        comfort = self._comfort_temperature
+        if self.current_operation == "auto" and comfort is not None:
+            return max(low, comfort + 1)
+        return low
 
     @property
     def max_temp(self) -> float:
@@ -109,24 +123,31 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
 
     @property
     def native_target_temperature(self) -> float | None:
-        """What the heater is aiming for now, in every mode (T_dsrd).
+        """The temperature the control sets.
 
-        In auto that follows the schedule, so it can differ from the manual
-        setpoint. Falls back to T_SetPoint if the heater doesn't report it.
+        In auto: the schedule's temperature for its scheduled hours (Tmsch),
+        which is what changing the target there sets. Otherwise what the
+        heater is aiming for now (T_dsrd), falling back to T_SetPoint. What
+        it aims for right now is always in the desired_temperature attribute.
         """
+        if self.current_operation == "auto":
+            scheduled = as_float(self.status.get("Tmsch"))
+            if scheduled is not None:
+                return scheduled
         desired = as_float(self.status.get("T_dsrd"))
         return desired if desired is not None else as_float(self.status.get("T_SetPoint"))
 
     @property
     def supported_features(self) -> WaterHeaterEntityFeature:
-        """Offer the temperature control only in manual mode.
+        """Offer the temperature control in manual and auto only.
 
-        The API sets the temperature through /manual, which also switches the
-        heater to manual. Hiding the control in other modes stops Home
-        Assistant from quietly taking the heater off its schedule.
+        Manual: sets the setpoint (POST /manual). Auto: sets the schedule's
+        temperature for its scheduled hours, as the app's dial does, without
+        leaving auto. Other modes have no temperature to set; /manual would
+        switch the heater to manual, so the control is hidden there.
         """
         features = WaterHeaterEntityFeature.OPERATION_MODE
-        if self.current_operation == "manual":
+        if self.current_operation in ("manual", "auto"):
             features |= WaterHeaterEntityFeature.TARGET_TEMPERATURE
         return features
 
@@ -136,11 +157,15 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {
+        attrs = {
             name: as_float(self.status.get(field))
             for name, field in EXTRA_ATTRIBUTES.items()
             if self.status.get(field) is not None
         }
+        if (comfort := self._comfort_temperature) is not None:
+            # Auto mode outside scheduled hours ("T comfort auto"); read-only.
+            attrs["comfort_temperature"] = float(comfort)
+        return attrs
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -160,6 +185,8 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
             )
         try:
             await self.hass.async_add_executor_job(func, *args)
+        except ScheduleError as err:
+            raise ServiceValidationError(str(err)) from err
         except ThermowattApiError as err:
             raise HomeAssistantError(f"Thermowatt command failed: {err}") from err
         # No status poll here: right after a command the cloud still reports
@@ -181,22 +208,40 @@ class ThermowattWaterHeater(*_COMPAT_BASES, ThermannEntity, WaterHeaterEntity):
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         temp = int(kwargs[ATTR_TEMPERATURE])
-        if self.current_operation != "manual":
+        mode = self.current_operation
+        if mode not in ("manual", "auto"):
             # Automations and scripts can still call the service directly.
             raise ServiceValidationError(
-                "The temperature can only be set in manual mode: setting it "
-                "switches the heater to manual. Switch to manual first."
+                "The temperature can only be set in manual or auto mode. In "
+                "other modes setting it would switch the heater to manual."
             )
         if not self.min_temp <= temp <= self.max_temp:
             raise ServiceValidationError(
                 f"{temp} °C is outside this heater's range "
                 f"({self.min_temp:g}-{self.max_temp:g} °C)"
             )
+        if mode == "auto":
+            await self._async_set_scheduled_temperature(temp)
+            return
         await self._async_send(self.coordinator.client.set_temperature, self._serial, temp)
         self._last_setpoint = temp
         self._async_show_commanded(
             {"Cmd": str(MODE_CMD["manual"]), "T_SetPoint": str(temp), "T_dsrd": str(temp)}
         )
+
+    async def _async_set_scheduled_temperature(self, temp: int) -> None:
+        """Auto: change the schedule's scheduled-hours temperature, as the app does.
+
+        Reads the schedule, replaces its highest temperature and saves it
+        (2 requests). The hours themselves and the mode are not changed.
+        """
+        old = as_int(self.status.get("Tmsch"))
+        await self._async_send(self.coordinator.client.set_scheduled_temperature, self._serial, temp)
+        changes = {"Tmsch": str(temp)}
+        if old is not None and as_int(self.status.get("T_dsrd")) == old:
+            # Inside scheduled hours the current target follows it.
+            changes["T_dsrd"] = str(temp)
+        self._async_show_commanded(changes)
 
     async def async_set_operation_mode(self, operation_mode: str) -> None:
         setpoint = self._last_setpoint

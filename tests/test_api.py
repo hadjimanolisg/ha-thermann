@@ -257,8 +257,9 @@ def test_scheduled_temperature_reads_then_posts_the_whole_schedule():
     c = client([resp(200, {"success": True, "result": SCHEDULE}), resp(200, {"success": True})])
     sent = c.set_scheduled_temperature("S", 50)
     calls = c.session.request.call_args_list
+    # Saved where the app saves it; a bare POST /auto would ignore the body.
     assert [(call.args[0], call.args[1].split("/api/v1")[1]) for call in calls] == [
-        ("GET", "/auto/raw-temperatures"), ("POST", "/auto")]
+        ("GET", "/auto/raw-temperatures"), ("POST", "/auto/raw-temperatures")]
     assert calls[1].kwargs["json"] == sent
     assert sent["DayPrg_0"] == WEEKDAY.replace("45", "50")
     assert calls[1].kwargs["headers"]["seriale"] == "S"
@@ -282,11 +283,29 @@ def test_invalid_temperature_is_refused_before_posting():
     assert endpoints(c) == ["raw-temperatures"]
 
 
-def test_comfort_and_settings_calls():
-    c = client([resp(200, {"success": True, "result": {"TComfort": 20}}), resp(200, {"success": True})])
+def test_settings_read():
+    c = client([resp(200, {"success": True, "result": {"TComfort": 20}})])
     assert c.get_settings("S") == {"TComfort": 20}
-    c.set_comfort_temperature("S", 22)
+    call = c.session.request.call_args
+    assert call.args[0] == "GET" and call.args[1].endswith("/waterheater-settings")
+
+
+def test_comfort_stores_setting_then_rewrites_the_other_hours():
+    ok = {"success": True}
+    c = client([resp(200, {"success": True, "result": SCHEDULE}), resp(200, ok), resp(200, ok)])
+    sent = c.set_comfort_temperature("S", 22)
     calls = c.session.request.call_args_list
-    assert calls[0].args[0] == "GET" and calls[0].args[1].endswith("/waterheater-settings")
-    assert calls[1].args[0] == "POST" and calls[1].args[1].endswith("/tcomfort")
+    assert [(call.args[0], call.args[1].split("/api/v1")[1]) for call in calls] == [
+        ("GET", "/auto/raw-temperatures"), ("POST", "/tcomfort"), ("POST", "/auto/raw-temperatures")]
     assert calls[1].kwargs["json"] == {"tcomfort": 22}
+    assert calls[2].kwargs["json"] == sent
+    assert sent["DayPrg_0"] == WEEKDAY.replace("20", "22")
+
+
+def test_comfort_refused_before_anything_is_sent():
+    from custom_components.thermann.schedule import ScheduleError
+
+    c = client([resp(200, {"success": True, "result": SCHEDULE})])
+    with pytest.raises(ScheduleError):
+        c.set_comfort_temperature("S", 45)
+    assert endpoints(c) == ["raw-temperatures"]

@@ -99,13 +99,13 @@ class FakeClient:
     def get_settings(self, serial):
         return self._run("settings", {"TBoost": None, "BoostDuration": None, "TComfort": 20})
 
-    def set_scheduled_temperature(self, serial, temp):
-        FakeClient.sent.append(("scheduled", temp))
-        return self._run("set_scheduled_temperature", None)
-
     def set_comfort_temperature(self, serial, temp):
         FakeClient.sent.append(("comfort", temp))
         return self._run("set_comfort_temperature", None)
+
+    def set_scheduled_temperature(self, serial, temp):
+        FakeClient.sent.append(("scheduled", temp))
+        return self._run("set_scheduled_temperature", None)
 
 
 @pytest.fixture

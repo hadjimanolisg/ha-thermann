@@ -1,4 +1,4 @@
-"""Auto mode temperatures (number entities) and the boost sensor."""
+"""Comfort temperature (auto mode, outside scheduled hours)."""
 from __future__ import annotations
 
 import pytest
@@ -12,14 +12,13 @@ from custom_components.thermann.schedule import ScheduleError
 
 from .conftest import BASE_DATA, STATUS
 
-SCHEDULED = "number.boiler_scheduled_temperature"
 COMFORT = "number.boiler_comfort_temperature"
+HEATER = "water_heater.boiler"
 AUTO = {**STATUS, "Cmd": "17", "T_dsrd": "45", "Tmsch": "45"}
 
 
-async def _setup(hass, fake_client, status=None):
-    if status is not None:
-        fake_client.behaviour["status"] = lambda c: dict(status)
+async def _setup(hass, fake_client, status=AUTO):
+    fake_client.behaviour["status"] = lambda c: dict(status)
     entry = MockConfigEntry(domain=DOMAIN, data={**BASE_DATA, "access_token": "a", "refresh_token": "r"})
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
@@ -27,109 +26,89 @@ async def _setup(hass, fake_client, status=None):
     return entry
 
 
-async def _set(hass, entity_id, value):
+async def _set(hass, value):
     await hass.services.async_call(
-        NUMBER_DOMAIN, "set_value", {"entity_id": entity_id, "value": value}, blocking=True
+        NUMBER_DOMAIN, "set_value", {"entity_id": COMFORT, "value": value}, blocking=True
     )
     await hass.async_block_till_done()
 
 
-async def test_values_come_from_status_and_settings(hass, fake_client):
-    await _setup(hass, fake_client, AUTO)
-    assert hass.states.get(SCHEDULED).state == "45.0"
-    assert hass.states.get(COMFORT).state == "20.0"
-    assert hass.states.get(SCHEDULED).attributes["min"] == 20
-    assert hass.states.get(SCHEDULED).attributes["max"] == 70
-    # Settings are read once at setup, not on every poll.
-    assert fake_client.calls.count("settings") == 1
-    await hass.data[DOMAIN][next(iter(hass.data[DOMAIN]))].async_refresh()
-    assert fake_client.calls.count("settings") == 1
-
-
-async def test_scheduled_temperature_in_auto_shows_at_once(hass, fake_client):
-    await _setup(hass, fake_client, AUTO)
-    polls = fake_client.calls.count("status")
-    await _set(hass, SCHEDULED, 55)
-    assert fake_client.sent == [("scheduled", 55)]
-    assert hass.states.get(SCHEDULED).state == "55.0"
-    # Inside scheduled hours the water heater's target follows.
-    assert hass.states.get("water_heater.boiler").attributes["temperature"] == 55
-    assert fake_client.calls.count("status") == polls
-
-
-async def test_scheduled_temperature_outside_hours_keeps_target(hass, fake_client):
-    await _setup(hass, fake_client, {**AUTO, "T_dsrd": "20"})
-    await _set(hass, SCHEDULED, 55)
-    assert hass.states.get("water_heater.boiler").attributes["temperature"] == 20
+async def test_value_and_range(hass, fake_client):
+    await _setup(hass, fake_client)
+    state = hass.states.get(COMFORT)
+    assert state.state == "20.0"
+    assert (state.attributes["min"], state.attributes["max"]) == (20, 44)  # below scheduled 45
+    assert fake_client.calls.count("settings") == 1  # read once at setup
 
 
 @pytest.mark.parametrize("cmd", ["9", "3", "65", "16"])
-async def test_scheduled_temperature_refused_outside_auto(hass, fake_client, cmd):
+async def test_only_available_in_auto(hass, fake_client, cmd):
     await _setup(hass, fake_client, {**AUTO, "Cmd": cmd})
-    with pytest.raises(ServiceValidationError, match="auto mode"):
-        await _set(hass, SCHEDULED, 55)
+    assert hass.states.get(COMFORT).state == "unavailable"
+
+
+async def test_set_inside_scheduled_hours(hass, fake_client):
+    await _setup(hass, fake_client)
+    polls = fake_client.calls.count("status")
+    await _set(hass, 25)
+    assert fake_client.sent == [("comfort", 25)]
+    assert hass.states.get(COMFORT).state == "25.0"
+    attrs = hass.states.get(HEATER).attributes
+    assert attrs["comfort_temperature"] == 25
+    assert attrs["min_temp"] == 26  # the scheduled temperature stays above it
+    assert attrs["desired_temperature"] == 45  # inside scheduled hours: unchanged
+    assert fake_client.calls.count("status") == polls
+
+
+async def test_set_outside_scheduled_hours_moves_current_target(hass, fake_client):
+    await _setup(hass, fake_client, {**AUTO, "T_dsrd": "20"})
+    await _set(hass, 25)
+    assert hass.states.get(HEATER).attributes["desired_temperature"] == 25
+
+
+async def test_must_stay_below_scheduled(hass, fake_client):
+    await _setup(hass, fake_client)
+    with pytest.raises(ServiceValidationError):
+        await _set(hass, 45)
     assert fake_client.sent == []
 
 
-async def test_schedule_refusal_becomes_a_validation_error(hass, fake_client):
-    await _setup(hass, fake_client, AUTO)
+async def test_schedule_problem_becomes_validation_error(hass, fake_client):
+    await _setup(hass, fake_client)
 
     def refuse(c):
-        raise ScheduleError("The scheduled temperature must be above the comfort temperature (20 °C)")
+        raise ScheduleError("The schedule has no scheduled hours to change")
 
-    fake_client.behaviour["set_scheduled_temperature"] = refuse
-    with pytest.raises(ServiceValidationError, match="above the comfort"):
-        await _set(hass, SCHEDULED, 21)
-    assert hass.states.get(SCHEDULED).state == "45.0"
+    fake_client.behaviour["set_comfort_temperature"] = refuse
+    with pytest.raises(ServiceValidationError, match="no scheduled hours"):
+        await _set(hass, 25)
+    assert hass.states.get(COMFORT).state == "20.0"
 
 
-async def test_api_failure_leaves_value_alone(hass, fake_client):
-    await _setup(hass, fake_client, AUTO)
+async def test_api_failure_leaves_value(hass, fake_client):
+    await _setup(hass, fake_client)
 
     def fail(c):
         raise api.ThermowattApiError("500")
 
-    fake_client.behaviour["set_scheduled_temperature"] = fail
+    fake_client.behaviour["set_comfort_temperature"] = fail
     with pytest.raises(HomeAssistantError, match="command failed"):
-        await _set(hass, SCHEDULED, 55)
-    assert hass.states.get(SCHEDULED).state == "45.0"
+        await _set(hass, 25)
+    assert hass.states.get(COMFORT).state == "20.0"
 
 
-async def test_comfort_temperature(hass, fake_client):
-    await _setup(hass, fake_client, AUTO)
-    await _set(hass, COMFORT, 25)
-    assert fake_client.sent == [("comfort", 25)]
-    assert hass.states.get(COMFORT).state == "25.0"
-
-
-async def test_comfort_must_stay_below_scheduled(hass, fake_client):
-    await _setup(hass, fake_client, AUTO)
-    with pytest.raises(ServiceValidationError, match="below the scheduled"):
-        await _set(hass, COMFORT, 45)
-    assert fake_client.sent == []
-
-
-async def test_commands_refused_while_rate_limited(hass, fake_client):
-    entry = await _setup(hass, fake_client, AUTO)
+async def test_refused_while_rate_limited(hass, fake_client):
+    entry = await _setup(hass, fake_client)
     hass.data[DOMAIN][entry.entry_id].rate_limited = True
-    for entity_id in (SCHEDULED, COMFORT):
-        with pytest.raises(HomeAssistantError, match="rate limiting"):
-            await _set(hass, entity_id, 30)
+    with pytest.raises(HomeAssistantError, match="rate limiting"):
+        await _set(hass, 25)
     assert fake_client.sent == []
 
 
-async def test_settings_read_failure_is_not_fatal(hass, fake_client):
+async def test_unknown_when_settings_read_failed(hass, fake_client):
     def quota(c):
         raise api.ThermowattRateLimitError("limit", daily=True)
 
     fake_client.behaviour["settings"] = quota
-    entry = await _setup(hass, fake_client, AUTO)
-    assert entry.state.name == "LOADED"
+    await _setup(hass, fake_client)
     assert hass.states.get(COMFORT).state == "unknown"
-    assert hass.states.get(SCHEDULED).state == "45.0"
-
-
-@pytest.mark.parametrize(("sts", "state"), [("32", "off"), ("48", "on"), ("49", "on"), ("1", "off")])
-async def test_boost_sensor(hass, fake_client, sts, state):
-    await _setup(hass, fake_client, {**STATUS, "WaterHeaterSts": sts})
-    assert hass.states.get("binary_sensor.boiler_boost").state == state

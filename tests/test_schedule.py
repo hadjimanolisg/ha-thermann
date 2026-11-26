@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.thermann.schedule import ScheduleError, hourly, with_scheduled_temperature
+from custom_components.thermann.schedule import (
+    ScheduleError,
+    hourly,
+    with_comfort_temperature,
+    with_scheduled_temperature,
+)
 
 # The owner's real schedule (probe, 2026-11-26): 45 at 06:00 on weekdays and
 # 12:00-17:59 every day, 20 otherwise.
@@ -53,3 +58,16 @@ def test_refuses_a_schedule_without_scheduled_hours():
 def test_refuses_an_unexpected_format(bad):
     with pytest.raises(ScheduleError, match="format"):
         hourly({**SCHEDULE, "DayPrg_3": bad})
+
+
+def test_comfort_changes_only_the_other_hours():
+    new = with_comfort_temperature(SCHEDULE, 25)
+    assert new["DayPrg_0"] == WEEKDAY.replace("20", "25")
+    assert new["DayPrg_5"] == WEEKEND.replace("20", "25")
+    assert new["Time_prg"] == "0"
+
+
+@pytest.mark.parametrize("temp", [45, 50])
+def test_comfort_must_stay_below_scheduled(temp):
+    with pytest.raises(ScheduleError, match="below the scheduled"):
+        with_comfort_temperature(SCHEDULE, temp)
